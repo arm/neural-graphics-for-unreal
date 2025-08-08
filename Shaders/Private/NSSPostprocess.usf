@@ -1,0 +1,266 @@
+// SPDX-FileCopyrightText: Copyright 2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-License-Identifier: MIT
+
+#include "NSSCommon.ush"
+
+#if QUANTIZED
+#define BufferType uint
+#else
+#define BufferType float4
+#endif
+
+Buffer<BufferType> InThetaAlpha;
+Buffer<BufferType> InKPNFilterCol3;
+Buffer<BufferType> InKPNFilterCol2;
+Buffer<BufferType> InKPNFilterCol1;
+Buffer<BufferType> InKPNFilterCol0;
+
+
+// Using complicated viewport to avoid issues when texture size doesn't match the viewport
+// (e.g. in editor render targets aren't resized properly).
+SCREEN_PASS_TEXTURE_VIEWPORT(InSceneColor)
+SamplerState InSceneColor_Sampler;
+Texture2D InSceneColor_Texture;
+
+SCREEN_PASS_TEXTURE_VIEWPORT(InSceneDepth)
+SamplerState InSceneDepth_Sampler;
+Texture2D InSceneDepth_Texture;
+
+SCREEN_PASS_TEXTURE_VIEWPORT(InSceneVelocity)
+SamplerState InSceneVelocity_Sampler;
+Texture2D InSceneVelocity_Texture;
+
+SCREEN_PASS_TEXTURE_VIEWPORT(InPrevFrameUpscaledSceneColour)
+SamplerState InPrevFrameUpscaledSceneColour_Sampler;
+Texture2D InPrevFrameUpscaledSceneColour_Texture;
+
+SCREEN_PASS_TEXTURE_VIEWPORT(InClosestDepthOffset)
+SamplerState InClosestDepthOffset_Sampler;
+Texture2D<uint> InClosestDepthOffset_Texture;
+
+int bCameraCut;
+float2 JitterPixels;
+
+RWTexture2D<float4> OutSceneColor;
+
+
+uint2 OutputSize;
+
+// Almost everything in this shader works with padded textures/sizes and it doesn't really care that this doesn't match the 
+// rendered scene, however for some of the velocity calculations we need the screen-space position to be correct relative to the 
+// projection matrix, so we need the original (unpadded) sizes to get this correct.
+uint2 UnpaddedInputSize;
+uint2 UnpaddedOutputSize;
+
+float3 CatmullRomWithDering(Texture2D Texture, SamplerState Sampler, float2 UV, float2 TextureExtents, float2 TextureExtentsInverse)
+{
+	FCatmullRomSamples Samples = GetBicubic2DCatmullRomSamples(UV, TextureExtents, TextureExtentsInverse);
+
+	float3 OutColor = 0;
+	float3 Min = 1.0f / 0.0f; // Positive infinity
+	float3 Max = -1.0f / 0.0f; // Negative infinity
+	for (uint i = 0; i < Samples.Count; i++)
+	{
+		float3 SampleValue = Texture.SampleLevel(Sampler, Samples.UV[i], 0).rgb;
+		OutColor += SampleValue * Samples.Weight[i];
+		Min = min(Min, SampleValue);
+		Max = max(Max, SampleValue);
+
+	}
+	OutColor *= Samples.FinalMultiplier;
+	
+	// dering in the case where we have negative values, we don't do this all the time
+    // as it can impose unnecessary blurring on the output
+	return any(OutColor < 0.0f)
+         ? clamp(OutColor, Min, Max)
+         : OutColor;
+}
+
+// See comments in UseTheKPN()
+int SolveInputLocation(int OutputPixelIdx, float UpscaleFactor, float Jitter)
+{
+	float Lower = (float) OutputPixelIdx / UpscaleFactor - (-Jitter + 0.5f);
+	float Upper = (float) (OutputPixelIdx + 1) / UpscaleFactor - (-Jitter + 0.5f);
+	int Candidate = floor(Upper);
+	if (Lower < Candidate)
+	{
+		return Candidate;
+	}
+	return -1;
+}
+
+struct KPNOutputs
+{
+	float3 FilteredColour;
+	float4 ColourToAccumulate;
+};
+
+// Applies the 4x4 KPN filter produced by the NSS Model to the jittered colour image.
+// Note that this is a very naive and suboptimal implementation which does not use any lookup tables.
+KPNOutputs UseTheKPN(uint2 OutputPixelPos, float2 UpscaleFactor)
+{
+	float2 UV = (OutputPixelPos + float2(0.5f, 0.5f)) / (float2) OutputSize;
+
+	KPNOutputs Outputs;
+	Outputs.FilteredColour = 0.0f;
+	Outputs.ColourToAccumulate = 0.0f;
+
+	float WeightsSum = 0.0f;
+
+	for (int x = 0; x < 4; ++x)
+	{
+		float4 DequantizedCol;
+		if (x == 0)	     DequantizedCol = ManualBilinear4(InKPNFilterCol0, UV, InSceneColor_ViewportSize);
+		else if (x == 1) DequantizedCol = ManualBilinear4(InKPNFilterCol1, UV, InSceneColor_ViewportSize);
+		else if (x == 2) DequantizedCol = ManualBilinear4(InKPNFilterCol2, UV, InSceneColor_ViewportSize);
+		else if (x == 3) DequantizedCol = ManualBilinear4(InKPNFilterCol3, UV, InSceneColor_ViewportSize);
+
+		DequantizedCol = max(DequantizedCol, float4(1e-7, 1e-7, 1e-7, 1e-7)); // Prevent weights of zero because it causes 0/0 problems.
+
+		for (int y = 0; y < 4; ++y)
+		{
+			float Weight = DequantizedCol[y];
+
+			int2 TapLocationInOutputSpace = OutputPixelPos + int2(x - 1, y - 1); // Offset by -1 so that the kernel is 'centred' on the pixel
+
+			// Figure out which pixel in the input image corresponds to this location in output space.
+			// There might not be one though, depending on the jitter and upscaling ratio etc.
+			// For each of x, y (independently), the input sample points are at locations:
+			//   j + n + 0.5,  in the input space, where j = jitter offset in input pixels and n is any integer from 0 to input image size
+			//   sj + sn + 0.5s = sn + (j + 0.5)*s, in the OUTPUT space, where s = upscaling ratio (e.g. 2.0)
+			//
+			//  We need to find if there is a value of n which corresponds to our desired output pixel location (o)
+			//   floor(sn + (j + 0.5)*s) = o
+			//   o                     <= sn + (j + 0.5)*s   < o + 1
+			//   o - (j + 0.5)*s       <= sn                 < o + 1 - (j + 0.5)*s
+			//   (o - (j + 0.5)*s) / s <= n                  < (o + 1 - (j + 0.5)*s) / s
+			//   o/s - (j + 0.5)       <= n                  < (o + 1) / s - (j + 0.5)
+			int InputPixelX = SolveInputLocation(TapLocationInOutputSpace.x, UpscaleFactor.x, JitterPixels.x);
+			int InputPixelY = SolveInputLocation(TapLocationInOutputSpace.y, UpscaleFactor.y, JitterPixels.y);
+
+			if (InputPixelX >= 0 && InputPixelY >= 0)
+			{
+				InputPixelX = clamp(InputPixelX, 0, InSceneColor_ViewportSize.x - 1);
+				InputPixelY = clamp(InputPixelY, 0, InSceneColor_ViewportSize.y - 1);
+				float3 Sample = InSceneColor_Texture.Load(int3(InputPixelX, InputPixelY, 0)).rgb;
+
+				Outputs.FilteredColour += Sample * Weight;
+				WeightsSum += Weight;
+
+				if (x == 1 && y == 1)
+				{
+					// Centre tap - there is a sample point exactly on this output pixel
+					Outputs.ColourToAccumulate = float4(Sample, 1.0f);
+				}
+			}
+		}
+	}
+
+	Outputs.FilteredColour = EXPOSURE * Outputs.FilteredColour / WeightsSum;
+	Outputs.ColourToAccumulate.rgb = EXPOSURE * Outputs.ColourToAccumulate.rgb;
+	return Outputs;
+}
+
+[numthreads(8, 8, 1)]
+void MainCS(
+	uint2 DispatchThreadId : SV_DispatchThreadID,
+	uint2 GroupId : SV_GroupID,
+	uint2 GroupThreadId : SV_GroupThreadID,
+	uint GroupThreadIndex : SV_GroupIndex)
+{
+	// Get the corresponding XY output pixel for this compute shader thread.
+	uint2 OutputPixelPos = DispatchThreadId;
+	if (all(OutputPixelPos < OutputSize))
+	{
+		float2 OutputPixelCentre = OutputPixelPos + 0.5f;
+		float2 OutputPixelCentreUv = OutputPixelCentre / (float2) OutputSize;
+
+		// Note we use the unpadded sizes here, as the ratio of the padded sizes may be different
+		float2 UpscaleFactor = (float2)UnpaddedOutputSize / (float2)UnpaddedInputSize;
+
+		uint2 InputPixelPos = uint2(OutputPixelCentre / UpscaleFactor);
+
+	    //-------------------------------------------------------------------------
+		// 1) Warp history
+		//-------------------------------------------------------------------------
+
+		// Dilate motion vectors with previously calculated nearest depth coordinate
+		// Load the pixel offset to the closest nearby depth (written out by the preprocess shader)
+		// The offset is two numbers (x and y), each of which can be -1, 0 or 1. Both these values are packed into a single byte.
+		uint EncodedOffset = InClosestDepthOffset_Texture.Load(uint3(InputPixelPos, 0));
+		int2 Offset = DecodeClosestDepthOffset(EncodedOffset);
+
+		// Load from velocity at this offset
+		int2 InputPixelPosAtClosestDepth = InputPixelPos + Offset;
+		float4 EncodedVelocity = InSceneVelocity_Texture.Load(int3(InputPixelPosAtClosestDepth, 0));
+		// Decode velocity - we need the depth for this too
+		float ClosestDepth = InSceneDepth_Texture.Load(int3(InputPixelPosAtClosestDepth, 0)).r;
+
+		// Note that we need to use the unpadded size here, as the screen pos needs to be usable with the projection matrix used for rendering
+		float2 DilatedScreenPos;
+		DilatedScreenPos.x = ((InputPixelPosAtClosestDepth.x + 0.5f) / (float) UnpaddedInputSize.x) * 2.0 - 1.0;
+		DilatedScreenPos.y = 1.0 - ((InputPixelPosAtClosestDepth.y + 0.5f) / (float) UnpaddedInputSize.y) * 2.0;
+
+		float2 ScreenVelocity = ComputeStaticVelocity(DilatedScreenPos, ClosestDepth);
+		bool bIsRenderedVelocity = EncodedVelocity.x > 0.0;
+		if (bIsRenderedVelocity)
+		{
+			ScreenVelocity = DecodeVelocityFromTexture(EncodedVelocity).xy;
+		}
+
+		// Note this UV is within the unpadded input size, so e.g. can't be used for sampling the input textures directly
+		float2 VelocityUvUnpadded = float2(0.5 * ScreenVelocity.x, -0.5 * ScreenVelocity.y);
+		float2 VelocityInputPixels = VelocityUvUnpadded * float2(UnpaddedInputSize);
+
+		if (length(VelocityInputPixels) <= 0.1f)
+		{
+			VelocityInputPixels = 0.0f;
+			VelocityUvUnpadded = 0.0f;
+		}
+
+		// Calculate pixel position to use for sampling things from the previous frame, e.g. for warping the history
+		float2 PrevFrameOutputPixelPos = OutputPixelCentre - VelocityInputPixels * UpscaleFactor;
+
+		float3 History = EXPOSURE * CatmullRomWithDering(InPrevFrameUpscaledSceneColour_Texture, InPrevFrameUpscaledSceneColour_Sampler,
+			InPrevFrameUpscaledSceneColour_UVViewportMin + (PrevFrameOutputPixelPos / (float2)InPrevFrameUpscaledSceneColour_ViewportSize) * InPrevFrameUpscaledSceneColour_UVViewportSize,
+			InPrevFrameUpscaledSceneColour_Extent, InPrevFrameUpscaledSceneColour_ExtentInverse);
+
+		//-------------------------------------------------------------------------
+		// 2) KPN filter → colour
+		//-------------------------------------------------------------------------
+		KPNOutputs KPNOutputs = UseTheKPN(OutputPixelPos, UpscaleFactor);
+		float3 Colour = KPNOutputs.FilteredColour;
+
+		// -------------------------------------------------------------------------
+		// 3) Load temporal parameters
+		//-------------------------------------------------------------------------
+
+		float4 TemporalParams;
+		if (bCameraCut)
+		{
+			TemporalParams = 0.0f;
+		}
+		else
+		{
+			TemporalParams = ManualBilinear4(InThetaAlpha, OutputPixelCentreUv, InSceneColor_ViewportSize);
+		}
+		float Theta = TemporalParams.x;
+		float Alpha = 0.35f * TemporalParams.y + 0.05f;
+
+		//-------------------------------------------------------------------------
+		// 3) Rectify history, force reset when offscreen
+		//-------------------------------------------------------------------------
+		float OnScreen = float(all(PrevFrameOutputPixelPos >= 0.0f) && all(PrevFrameOutputPixelPos <= OutputSize));
+		Colour = lerp(Colour, History, Theta * OnScreen);
+
+		//-------------------------------------------------------------------------
+		// 4) Accumulate new sample
+		//-------------------------------------------------------------------------
+		Colour = lerp(Tonemap(Colour), Tonemap(KPNOutputs.ColourToAccumulate.rgb), Alpha * KPNOutputs.ColourToAccumulate.a);
+
+		//-------------------------------------------------------------------------
+		// 5) Inverse tonemap + exposure and write output
+		//-------------------------------------------------------------------------
+		OutSceneColor[OutputPixelPos] = float4(InverseTonemap(Colour) / EXPOSURE, 1.0f);
+	}
+}

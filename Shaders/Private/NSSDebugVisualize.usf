@@ -1,0 +1,81 @@
+// SPDX-FileCopyrightText: Copyright 2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-License-Identifier: MIT
+
+#include "NSSCommon.ush"
+
+Texture2D<uint> InputDepthOffsetTexture;
+uint2 InputDepthOffsetTextureSize;
+
+void VisualizeDepthOffsetTexturePS(float4 SvPosition : SV_POSITION, noperspective float4 UV : TEXCOORD0, out float4 OutColor : SV_Target0)
+{
+	// Note that we have to use Load rather than Sample, because R8_UINT can't be sampled.
+	uint2 TexturePos = UV * InputDepthOffsetTextureSize;
+	uint EncodedOffset = InputDepthOffsetTexture.Load(int3(TexturePos, 0)).r;
+	int2 Offset = DecodeClosestDepthOffset(EncodedOffset);
+	OutColor = float4((Offset.xy + 1) * 0.5, 0, 1);	
+}
+
+#if QUANTIZED
+Buffer<uint> InBuffer;
+#else
+Buffer<float> InBuffer;
+#endif
+uint3 BufferSizeXYZ;
+uint FirstChannel;
+uint NumChannels;
+
+
+void VisualizeBufferPS(float4 SvPosition : SV_POSITION, noperspective float4 UV : TEXCOORD0, out float4 OutColor : SV_Target0)
+{
+	uint X = floor(UV.x * BufferSizeXYZ.x);
+	uint Y = floor(UV.y * BufferSizeXYZ.y);
+	
+	float4 Values = float4(0.0f, 0.0f, 0.0f, 0.0f);
+#if QUANTIZED
+	uint FirstByteIdx = (Y * BufferSizeXYZ.x + X) * BufferSizeXYZ.z + FirstChannel;
+	uint FirstWordIdx = FirstByteIdx / 4;
+	float4 FirstFourValues = Dequantize(InBuffer[FirstWordIdx]);
+	if (FirstByteIdx % 4 == 0)	
+	{
+		Values = FirstFourValues;
+	}
+	else if (FirstByteIdx % 4 == 1)	
+	{
+		float4 SecondFourValues = Dequantize(InBuffer[FirstWordIdx+1]);
+		Values = float4(FirstFourValues.yzw, SecondFourValues.x);
+	}
+	else if (FirstByteIdx % 4 == 2)	
+	{
+		float4 SecondFourValues = Dequantize(InBuffer[FirstWordIdx+1]);
+		Values = float4(FirstFourValues.zw, SecondFourValues.xy);
+	}
+	else if (FirstByteIdx % 4 == 3)	
+	{
+		float4 SecondFourValues = Dequantize(InBuffer[FirstWordIdx+1]);
+		Values = float4(FirstFourValues.w, SecondFourValues.xyz);
+	}
+#else
+	uint FirstIdx = (Y * BufferSizeXYZ.x + X) * BufferSizeXYZ.z + FirstChannel;
+	for (int I = 0; I < NumChannels; ++I)
+	{
+		Values[I] = InBuffer[FirstIdx + I];
+	}
+#endif
+	
+	if (NumChannels == 1)
+	{
+		OutColor = float4(Values[0], Values[0], Values[0], 1.0f);
+	}
+	else if (NumChannels == 2)
+	{
+		OutColor = float4(Values[0], Values[1], 0.0f, 1.0f);
+	}
+	else if (NumChannels == 3)
+	{
+		OutColor = float4(Values[0], Values[1], Values[2], 1.0f);
+	}
+	else if (NumChannels == 4)
+	{
+		OutColor = float4(Values[0], Values[1], Values[2], 1.0f); // Note we ignore alpha!
+	}
+}

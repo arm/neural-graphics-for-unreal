@@ -1,0 +1,180 @@
+// SPDX-FileCopyrightText: Copyright 2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-License-Identifier: MIT
+
+#include "/Engine/Private/Common.ush"
+#include "/Engine/Private/TextureSampling.ush"
+#include "/Engine/Private/ScreenPass.ush"
+
+float2 ComputeStaticVelocity(float2 ScreenPos, float DeviceZ)
+{
+	float3 PosN = float3(ScreenPos, DeviceZ);
+
+	float4 ThisClip = float4(PosN, 1);
+	float4 PrevClip = mul(ThisClip, View.ClipToPrevClip);
+	float2 PrevScreen = PrevClip.xy / PrevClip.w;
+	return PosN.xy - PrevScreen;
+}
+
+#define EXPOSURE (7.38905609893) // e^2
+
+float3 Tonemap(float3 Colour)
+{
+	// Karis tonemapper
+    // http://graphicrants.blogspot.com/2013/12/tone-mapping.html
+	float m = max(max(Colour.r, Colour.g), Colour.b);
+	return Colour / (float3(1.f, 1.f, 1.f) + m);
+}
+
+float3 InverseTonemap(float3 Colour)
+{
+    // Karis tonemapper inverse
+    // http://graphicrants.blogspot.com/2013/12/tone-mapping.html
+	// Very bright input colours (e.g. from MegaLights?) can result in a maxed-out tonemapped value of exactly 1.0,
+	// which would then lead to an inverse-tonemapped value of inf, which causes problems.
+	Colour = clamp(Colour, 0.0f, 0.99999f);
+	float m = max(max(Colour.r, Colour.g), Colour.b);
+	return Colour / (float3(1.f, 1.f, 1.f) - m);
+}
+
+uint ReinterpretAs8BitUnsigned(int x)
+{
+	return x >= 0 ? x : (x + 256);
+}
+
+// Quantizes four fp32 values into four int8 values and packs them into a uint32.
+// The zero point and scale are fixed to -128 and 1/255
+uint Quantize(float4 FourFloats)
+{
+	uint Byte0 = ReinterpretAs8BitUnsigned(clamp(round(FourFloats.x * 255.0f - 128), -128, 127));
+	uint Byte1 = ReinterpretAs8BitUnsigned(clamp(round(FourFloats.y * 255.0f - 128), -128, 127));
+	uint Byte2 = ReinterpretAs8BitUnsigned(clamp(round(FourFloats.z * 255.0f - 128), -128, 127));
+	uint Byte3 = ReinterpretAs8BitUnsigned(clamp(round(FourFloats.w * 255.0f - 128), -128, 127));
+
+	return (Byte3 << 24) | (Byte2 << 16) | (Byte1 << 8) | (Byte0 << 0);
+}
+
+int ReinterpretAs8BitSigned(uint x)
+{
+	return x < 128 ? x : (x - 256);
+}
+
+// Dequantizes four int8 values into four fp32 values. The four int8 values are unpacked from a uint32.
+// The zero point and scale are fixed to -127 and 1/255
+float4 Dequantize(uint PackedFourBytes)
+{
+	// Note we clamp the unpacked int8 values to -127..127, i.e. remap -128 to -127, so that this is more similar
+	// to SNORM texture sampling, as this is what a more optimal integration would do.
+	return float4(
+		(clamp(ReinterpretAs8BitSigned((PackedFourBytes >> 0) & 0xFF), -127, 127) + 127) / 255.0f,
+		(clamp(ReinterpretAs8BitSigned((PackedFourBytes >> 8) & 0xFF), -127, 127) + 127) / 255.0f,
+		(clamp(ReinterpretAs8BitSigned((PackedFourBytes >> 16) & 0xFF), -127, 127) + 127) / 255.0f,
+		(clamp(ReinterpretAs8BitSigned((PackedFourBytes >> 24) & 0xFF), -127, 127) + 127) / 255.0f
+	);
+}
+
+uint EncodeClosestDepthOffset(int2 Offset)
+{
+	// The offset is two numbers (x and y), each of which can be -1, 0 or 1. Both these values are packed into a single byte.
+	uint EncodedOffset = ((Offset.x) + 1) | ((Offset.y + 1) << 2);
+	return EncodedOffset;
+}
+
+int2 DecodeClosestDepthOffset(uint EncodedOffset)
+{
+	// The offset is two numbers (x and y), each of which can be -1, 0 or 1. Both these values are packed into a single byte.
+	int2 Offset = int2(
+		int(EncodedOffset & 0x3) - 1, // Least-significant 2 bits
+		(int(EncodedOffset >> 2) & 0x3) - 1 // Next least-significant 2 bits
+	);
+	return Offset;
+}
+
+#if QUANTIZED
+
+float ManualBilinear(Buffer<uint> MyBuffer, float2 UV, uint2 Extent)
+{
+	FBilinearSampleInfos BilinearInter = GetBilinearSampleLevelInfos(UV, Extent, 1.0f / Extent);
+
+	float Result = 0.0f;
+	for (uint i = 0; i < 4; i++)
+	{
+		float BilinearWeight = GetSampleWeight(BilinearInter, i);
+		// Note that Unreal's GetSamplePixelCoord can't be used here, as it doesn't deal with negative pixel coords which we may
+		// get along the edges!
+		int2 PixelPos = int2(BilinearInter.TopLeftPixelCoord) + int2(BilinearSamplingOffsets2x2[i]);
+
+		uint Idx = clamp(PixelPos.y, 0, (int)Extent.y - 1) * Extent.x + clamp(PixelPos.x, 0, (int)Extent.x - 1);
+
+		uint WordIdx = Idx / 4;
+		uint ByteIdxWithinWord = Idx % 4;
+		float4 FourValues = Dequantize(MyBuffer[WordIdx]);
+		float x = FourValues[ByteIdxWithinWord];
+
+		Result += x * BilinearWeight;
+	}
+
+	return Result;
+}
+
+float4 ManualBilinear4(Buffer<uint> MyBuffer, float2 UV, uint2 Extent)
+{
+	FBilinearSampleInfos BilinearInter = GetBilinearSampleLevelInfos(UV, Extent, 1.0f / Extent);
+
+	float4 Result = float4(0.0f, 0.0f, 0.0f, 0.0f);
+	for (uint i = 0; i < 4; i++)
+	{
+		float BilinearWeight = GetSampleWeight(BilinearInter, i);
+		// Note that Unreal's GetSamplePixelCoord can't be used here, as it doesn't deal with negative pixel coords which we may
+		// get along the edges!
+		int2 PixelPos = int2(BilinearInter.TopLeftPixelCoord) + int2(BilinearSamplingOffsets2x2[i]);
+
+		uint Idx = clamp(PixelPos.y, 0, (int)Extent.y - 1) * Extent.x + clamp(PixelPos.x, 0, (int)Extent.x - 1);
+
+		float4 x = Dequantize(MyBuffer[Idx]);
+		Result += x * BilinearWeight;
+
+	}
+
+	return Result;
+}
+
+#else
+
+float ManualBilinear(Buffer<float> MyBuffer, float2 UV, uint2 Extent)
+{
+	FBilinearSampleInfos BilinearInter = GetBilinearSampleLevelInfos(UV, Extent, 1.0f / Extent);
+
+	float Result = 0.0f;
+	for (uint i = 0; i < 4; i++)
+	{
+		float BilinearWeight = GetSampleWeight(BilinearInter, i);
+		// Note that Unreal's GetSamplePixelCoord can't be used here, as it doesn't deal with negative pixel coords which we may
+		// get along the edges!
+		int2 PixelPos = int2(BilinearInter.TopLeftPixelCoord) + int2(BilinearSamplingOffsets2x2[i]);
+
+		uint Idx = clamp(PixelPos.y, 0, (int) Extent.y - 1) * Extent.x + clamp(PixelPos.x, 0, (int) Extent.x - 1);
+
+		Result += MyBuffer[Idx] * BilinearWeight;
+	}
+
+	return Result;
+}
+float4 ManualBilinear4(Buffer<float4> MyBuffer, float2 UV, uint2 Extent)
+{
+	FBilinearSampleInfos BilinearInter = GetBilinearSampleLevelInfos(UV, Extent, 1.0f / Extent);
+
+	float4 Result = float4(0.0f, 0.0f, 0.0f, 0.0f);
+	for (uint i = 0; i < 4; i++)
+	{
+		float BilinearWeight = GetSampleWeight(BilinearInter, i);
+		// Note that Unreal's GetSamplePixelCoord can't be used here, as it doesn't deal with negative pixel coords which we may
+		// get along the edges!
+		int2 PixelPos = int2(BilinearInter.TopLeftPixelCoord) + int2(BilinearSamplingOffsets2x2[i]);
+		uint Idx = clamp(PixelPos.y, 0, (int)Extent.y - 1) * Extent.x + clamp(PixelPos.x, 0, (int)Extent.x - 1);
+
+		Result += MyBuffer[Idx] * BilinearWeight;
+	}
+
+	return Result;
+}
+#endif

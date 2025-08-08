@@ -1,0 +1,395 @@
+// SPDX-FileCopyrightText: Copyright 2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-License-Identifier: MIT
+
+#include "NSSCommon.ush"
+
+SCREEN_PASS_TEXTURE_VIEWPORT(InSceneColor)
+SamplerState InSceneColor_Sampler;
+Texture2D InSceneColor_Texture;
+
+SCREEN_PASS_TEXTURE_VIEWPORT(InSceneVelocity)
+SamplerState InSceneVelocity_Sampler;
+Texture2D InSceneVelocity_Texture;
+
+SCREEN_PASS_TEXTURE_VIEWPORT(InSceneDepth)
+SamplerState InSceneDepth_Sampler;
+Texture2D InSceneDepth_Texture;
+
+SCREEN_PASS_TEXTURE_VIEWPORT(InPrevFrameSceneDepth)
+SamplerState InPrevFrameSceneDepth_Sampler;
+Texture2D InPrevFrameSceneDepth_Texture;
+
+SCREEN_PASS_TEXTURE_VIEWPORT(InPrevFrameUpscaledSceneColour)
+SamplerState InPrevFrameUpscaledSceneColour_Sampler;
+Texture2D InPrevFrameUpscaledSceneColour_Texture;
+
+SCREEN_PASS_TEXTURE_VIEWPORT(InPrevLumaDerivativeAndLuma)
+SamplerState InPrevLumaDerivativeAndLuma_Sampler;
+Texture2D<float2> InPrevLumaDerivativeAndLuma_Texture;
+
+SCREEN_PASS_TEXTURE_VIEWPORT(InPrevFrameClosestDepthOffset)
+SamplerState InPrevFrameClosestDepthOffset_Sampler;
+Texture2D<uint> InPrevFrameClosestDepthOffset_Texture;
+
+#if QUANTIZED
+Buffer<uint> InFeedback;
+#else
+Buffer<float4> InFeedback;
+#endif
+
+int bCameraCut;
+
+float2 PrevFrameJitterPixels;
+
+// Almost everything in this shader works with padded textures/sizes and it doesn't really care that this doesn't match the 
+// rendered scene, however for some of the velocity calculations we need the screen-space position to be correct relative to the 
+// projection matrix, so we need the original (unpadded size) to get this correct.
+uint2 UnpaddedInputSize;
+uint2 UnpaddedOutputSize;
+
+float DisocclusionMaskDepthSeparationConstant;
+float DisocclusionMaskPowerConstant;
+
+struct PreprocessedPixel
+{
+	float3 DownsampledTonemappedWarpedPrevFrameUpscaledColour;
+	float3 JitteredTonemappedInput;
+	float DisocclusionMask;
+	float4 WarpedFeedback;
+	float LumaDerivative;
+};
+
+#if QUANTIZED
+RWBuffer<uint> OutPreprocessed;
+#else
+// Note: not using struct as the packing differs between DirectX + Vulkan.
+RWBuffer<float> OutPreprocessed;
+#endif
+
+RWTexture2D<float2> OutLumaDerivativeAndLuma;
+RWTexture2D<uint> OutClosestDepthOffset;
+
+
+float GetLuminance(float3 Rgb)
+{
+	return 0.2126 * Rgb.r + 0.7152 * Rgb.g + 0.0722 * Rgb.b;
+}
+
+struct ClosestDepthResults
+{
+	uint2 PixelPos;
+	float Depth;
+};
+
+ClosestDepthResults GetClosestDepth(int2 PixelXY, Texture2D DepthTexture, uint2 TextureSize)
+{
+	ClosestDepthResults Result;
+
+	Result.Depth = 0;
+	Result.PixelPos = PixelXY; // In case all depths are 0 (really far away).
+	for (int i = -1; i <= 1; i++)
+	{
+		if ((PixelXY.x + i) < 0 || (PixelXY.x + i) >= TextureSize.x)
+		{
+			continue;
+		}
+
+		for (int j = -1; j <= 1; j++)
+		{
+			if ((PixelXY.y + j) < 0 || (PixelXY.y + j) >= TextureSize.y)
+			{
+				continue;
+			}
+
+			float Sample = DepthTexture.Load(int3(PixelXY.x + i, PixelXY.y + j, 0)).r;
+			if (Sample > Result.Depth)
+			{
+				Result.Depth = Sample;
+				Result.PixelPos = uint2(PixelXY.x + i, PixelXY.y + j);
+			}
+		}
+	}
+
+	return Result;
+}
+
+float GetViewSpaceDepth(float ClipDepth)
+{
+	float4 ViewSpace = mul(float4(0, 0, ClipDepth, 1), View.ClipToView);
+	return ViewSpace.z / ViewSpace.w;
+}
+
+struct AccumulateDisocclusionOutputs
+{
+	float DepthToAccumulate;
+	float WeightToAccumulate;
+};
+
+AccumulateDisocclusionOutputs AccumulateDisocclusionMask(float CurrentDepth, float CurrentViewSpaceDepth, int2 PixelPos, float Weight, float PrevDepth)
+{
+	AccumulateDisocclusionOutputs Result;
+	Result.WeightToAccumulate = 0.0f;
+	Result.DepthToAccumulate = 0.0f;
+	if (any(PixelPos < 0) || any(PixelPos >= InSceneDepth_ViewportSize))
+	{
+		Result.WeightToAccumulate = Weight;
+		return Result;
+	}
+
+	if (Weight <= 0.1f)
+	{
+		return Result;
+	}
+
+	float PrevViewSpaceDepth = GetViewSpaceDepth(PrevDepth);
+	float DepthDiff = (CurrentViewSpaceDepth - PrevViewSpaceDepth);
+
+	if (DepthDiff <= 0.0f)
+	{
+		return Result;
+	}
+
+    float DepthThreshold = max(CurrentViewSpaceDepth, PrevViewSpaceDepth);
+    float RequiredDepthSeparation = DisocclusionMaskDepthSeparationConstant * DepthThreshold;
+
+    Result.WeightToAccumulate = Weight;
+    Result.DepthToAccumulate = pow(saturate(RequiredDepthSeparation / DepthDiff), DisocclusionMaskPowerConstant) * Weight;
+	
+	return Result;
+}
+
+float ComputeDisocclusionMask(float2 PrevFramePixelPos, float CurrentClosestDepth, float2 VelocityPixels)
+{
+	float2 PrevFrameUnjitteredPixelPos = PrevFramePixelPos + PrevFrameJitterPixels;
+	float CurrentViewSpaceDepth = GetViewSpaceDepth(CurrentClosestDepth);
+
+	// Load the pixel offset to the closest nearby depth from the previous frame
+	// The offset is two numbers (x and y), each of which can be -1, 0 or 1. Both these values are packed into a single byte.
+	int2 Offset = int2(0, 0);
+	bool OnScreen = all(PrevFrameUnjitteredPixelPos >= 0.0f) && all(PrevFrameUnjitteredPixelPos <= InPrevFrameClosestDepthOffset_ViewportSize);
+	if (OnScreen)
+	{
+		uint EncodedOffset = InPrevFrameClosestDepthOffset_Texture.Load(uint3(PrevFrameUnjitteredPixelPos, 0));
+		Offset = DecodeClosestDepthOffset(EncodedOffset);
+	}
+
+	// Because the reprojection of the previous depth involves fractional pixel offsets, we sample the four surrounding pixels
+	// (quad) and compare each individually to the current depth.
+	float2 PrevDepthPixelCentre = PrevFrameUnjitteredPixelPos + Offset;
+	float2 PrevDepthPixelBilinearTopLeft = floor(PrevDepthPixelCentre - 0.5f);
+	float2 SubpixelOffset = (PrevDepthPixelCentre - 0.5f) - PrevDepthPixelBilinearTopLeft;
+	float4 PrevDepthQuad = InPrevFrameSceneDepth_Texture.Gather(InPrevFrameSceneDepth_Sampler, PrevDepthPixelCentre * InPrevFrameSceneDepth_ExtentInverse);
+
+	// Gather() returns samples in the order, bottom-left, bottom-right, top-right, top-left
+	AccumulateDisocclusionOutputs a1 = AccumulateDisocclusionMask(CurrentClosestDepth, CurrentViewSpaceDepth, int2(PrevDepthPixelBilinearTopLeft.x, PrevDepthPixelBilinearTopLeft.y + 1), (1 - SubpixelOffset.x) * SubpixelOffset.y, PrevDepthQuad.x); // Bottom-left
+	AccumulateDisocclusionOutputs a2 = AccumulateDisocclusionMask(CurrentClosestDepth, CurrentViewSpaceDepth, int2(PrevDepthPixelBilinearTopLeft.x + 1, PrevDepthPixelBilinearTopLeft.y + 1), SubpixelOffset.x * SubpixelOffset.y, PrevDepthQuad.y); // Bottom-right
+	AccumulateDisocclusionOutputs a3 = AccumulateDisocclusionMask(CurrentClosestDepth, CurrentViewSpaceDepth, int2(PrevDepthPixelBilinearTopLeft.x + 1, PrevDepthPixelBilinearTopLeft.y), SubpixelOffset.x * (1 - SubpixelOffset.y), PrevDepthQuad.z); // Top-right
+	AccumulateDisocclusionOutputs a4 = AccumulateDisocclusionMask(CurrentClosestDepth, CurrentViewSpaceDepth, int2(PrevDepthPixelBilinearTopLeft.x, PrevDepthPixelBilinearTopLeft.y), (1 - SubpixelOffset.x) * (1 - SubpixelOffset.y), PrevDepthQuad.w); // Top-left
+
+	float WeightSum = a1.WeightToAccumulate + a2.WeightToAccumulate + a3.WeightToAccumulate + a4.WeightToAccumulate;
+	float DepthSum = a1.DepthToAccumulate + a2.DepthToAccumulate + a3.DepthToAccumulate + a4.DepthToAccumulate;
+
+	float Result = (WeightSum > 0) ? saturate(1.0f - DepthSum / WeightSum) : 0.0f;
+	
+	// Scale disocclusion mask on static frames to let network know this is happening under
+    // static conditions, reduces jitter differences across frames causing false flags
+    if (length(VelocityPixels) < 0.5f)
+    {
+        Result = Result * 0.617464542388916;
+    }
+
+	return Result;
+}
+
+float2 CalculateLumaDerivativeAndLuma(float2 PrevFramePixelPos, float3 TonemappedJitteredColour, float DisocclusionMask)
+{
+	const float kDIS_THRESH = 0.01;
+	const float kDERIV_POW = 1.5;
+	const float kDERIV_MAX = 0.3;
+	const float kDERIV_MIN = 0.05;
+	const float kDERIV_ALPHA = 0.1;
+	const float kDERIV_MAX_INVERSE = 1.0 / kDERIV_MAX;
+	const float kDERIV_MAX_POW_INVERSE = 1.0 / pow(kDERIV_MAX, kDERIV_POW);
+
+	//--------------------------------------------------------------------
+    // 1.  Fetch history (luma + derivative)
+    //--------------------------------------------------------------------
+	float2 WarpedPrevLumaDerivativeAndLuma = InPrevLumaDerivativeAndLuma_Texture.SampleLevel(InPrevLumaDerivativeAndLuma_Sampler,
+			InPrevLumaDerivativeAndLuma_UVViewportMin + (PrevFramePixelPos / (float2) InPrevLumaDerivativeAndLuma_ViewportSize) * InPrevLumaDerivativeAndLuma_UVViewportSize,
+			0).rg;
+	float PrevLumaDerivative = WarpedPrevLumaDerivativeAndLuma.x;
+	float PrevLuma = WarpedPrevLumaDerivativeAndLuma.y;
+
+    //--------------------------------------------------------------------
+    // 2.  Current luma & raw derivative
+    //--------------------------------------------------------------------
+	float Luma = GetLuminance(TonemappedJitteredColour);
+	float LumaDerivative = abs(Luma - PrevLuma);
+
+    //--------------------------------------------------------------------
+    // 3.  Soft-clip & normalize
+    //--------------------------------------------------------------------
+    // Clip to `DERIV_MAX` which is ~typical max value,
+    // allows for better precision allocation when normalized
+	float LumaDerivativeClipped = min(LumaDerivative, kDERIV_MAX);
+    // Discard values less than `DERIV_MIN` to reduce ghosting
+	if (LumaDerivativeClipped < kDERIV_MIN)
+	{
+		LumaDerivativeClipped = 0.0f;
+	}
+
+    // Normalize with soft-clip
+	float LumaDerivativeCurved = pow(LumaDerivative, kDERIV_POW) * kDERIV_MAX_POW_INVERSE;
+
+	//--------------------------------------------------------------------
+    // 4.  Temporal accumulation
+    //--------------------------------------------------------------------
+    // Accumulate the new derivative into the history.
+    // We apply an adaptive alpha scaling, to ensure that if a derivative converges to a high value
+    // it becomes more difficult to reset that value, this provides temporally stable convergence
+	float AlphaScale = lerp(kDERIV_ALPHA, kDERIV_ALPHA * 0.1, clamp(PrevLumaDerivative, 0, kDERIV_MAX) * kDERIV_MAX_INVERSE);
+	LumaDerivative = lerp(PrevLumaDerivative, LumaDerivativeCurved, AlphaScale);
+
+	//--------------------------------------------------------------------
+    // 5.  Remove disoccluded pixels
+    //--------------------------------------------------------------------
+	if (DisocclusionMask > kDIS_THRESH)
+	{
+		LumaDerivative = 0.0f;
+	}
+
+	return float2(LumaDerivative, Luma);
+}
+
+[numthreads(8, 8, 1)]
+void MainCS(
+	uint2 DispatchThreadId : SV_DispatchThreadID,
+	uint2 GroupId : SV_GroupID,
+	uint2 GroupThreadId : SV_GroupThreadID,
+	uint GroupThreadIndex : SV_GroupIndex)
+{
+	// Get the corresponding XY pixel for this compute shader thread.
+	uint2 InputPixelPos = DispatchThreadId; // Position within the pre-processed data (i.e. the input to the network)
+	if (all(InputPixelPos < InSceneColor_ViewportSize)) // Some threads may be outside due to group size.
+	{
+		PreprocessedPixel Result;
+
+		float2 InputPixelCentre = InputPixelPos + 0.5f;
+		float2 InputPixelCentreUv = InputPixelCentre / (float2) InSceneColor_ViewportSize;
+
+		// Note we use the unpadded sizes here, as the ratio of the padded sizes may be different
+		float2 UpscaleFactor = (float2) UnpaddedOutputSize / (float2) UnpaddedInputSize;
+
+		//-------------------------------------------------------------------------
+		// 1) Dilate depth, find nearest pixel coordinate
+		//-------------------------------------------------------------------------
+		ClosestDepthResults ClosestDepth = GetClosestDepth(InputPixelPos, InSceneDepth_Texture, InSceneDepth_ViewportSize);
+
+
+		//-------------------------------------------------------------------------
+		// 2) Load motion vectors
+		//-------------------------------------------------------------------------
+		float4 DilatedEncodedVelocity = InSceneVelocity_Texture.Load(int3(ClosestDepth.PixelPos, 0));
+
+		// Note that we need to use the unpadded size here, as the screen pos needs to be usable with the projection matrix used for rendering
+		float2 DilatedScreenPos;
+		DilatedScreenPos.x = ((ClosestDepth.PixelPos.x + 0.5f) / (float)UnpaddedInputSize.x) * 2.0 - 1.0;
+		DilatedScreenPos.y = 1.0 - ((ClosestDepth.PixelPos.y + 0.5f) / (float) UnpaddedInputSize.y) * 2.0;
+
+		float2 DilatedScreenVelocity = ComputeStaticVelocity(DilatedScreenPos, ClosestDepth.Depth);
+		bool bIsRenderedVelocity = DilatedEncodedVelocity.x > 0.0;
+		if (bIsRenderedVelocity)
+		{
+			DilatedScreenVelocity = DecodeVelocityFromTexture(DilatedEncodedVelocity).xy;
+		}
+		// Note this UV is within the unpadded input size, so e.g. can't be used for sampling the input textures directly
+		float2 VelocityUvUnpadded = float2(0.5 * DilatedScreenVelocity.x, -0.5 * DilatedScreenVelocity.y);
+		float2 VelocityPixels = VelocityUvUnpadded * float2(UnpaddedInputSize);
+		// Suppress very small motion - no value in resampling here
+
+		if (length(VelocityPixels) <= 0.1f)
+		{
+			VelocityPixels = 0.0f;
+			VelocityUvUnpadded = 0.0f;
+		}
+
+		// Calculate pixel position to use for sampling things from the previous frame, e.g. for warping the history
+		float2 PrevFramePixelPos = InputPixelCentre - VelocityPixels;
+
+		//-------------------------------------------------------------------------
+		// 3) Calculate depth-based disocclusion mask
+		//-------------------------------------------------------------------------
+        Result.DisocclusionMask = ComputeDisocclusionMask(PrevFramePixelPos, ClosestDepth.Depth, VelocityPixels);
+
+		//-------------------------------------------------------------------------
+		// 4) Downsample + warp history buffer 
+		//-------------------------------------------------------------------------
+		Result.DownsampledTonemappedWarpedPrevFrameUpscaledColour =
+			Tonemap(EXPOSURE * InPrevFrameUpscaledSceneColour_Texture.SampleLevel(InPrevFrameUpscaledSceneColour_Sampler,
+				clamp(InPrevFrameUpscaledSceneColour_UVViewportMin + ((PrevFramePixelPos) * UpscaleFactor / InPrevFrameUpscaledSceneColour_ViewportSize) * InPrevFrameUpscaledSceneColour_UVViewportSize, InPrevFrameUpscaledSceneColour_UVViewportBilinearMin, InPrevFrameUpscaledSceneColour_UVViewportBilinearMax), 0).rgb);
+
+		//-------------------------------------------------------------------------
+		// 5) Read current low-res / jittered / aliased colour
+		//-------------------------------------------------------------------------
+		Result.JitteredTonemappedInput = Tonemap(EXPOSURE * InSceneColor_Texture.Load(uint3(InputPixelPos, 0)).rgb);
+		if (any(isnan(Result.JitteredTonemappedInput)))
+		{
+			Result.JitteredTonemappedInput = float3(0.0f, 0.0f, 0.0f); // Seems like megalights produces NaNs sometimes!
+		}
+
+		//-------------------------------------------------------------------------
+		// 6) Calculate derivative of `luma`
+		//    helps identifying high-frequency flicker due to jitter
+		//-------------------------------------------------------------------------
+		float2 LumaDerivativeAndLuma = CalculateLumaDerivativeAndLuma(PrevFramePixelPos, Result.JitteredTonemappedInput, Result.DisocclusionMask);
+		Result.LumaDerivative = LumaDerivativeAndLuma.x;
+		if (bCameraCut)
+		{
+			Result.LumaDerivative = 0.0f;
+		}
+
+	    //-------------------------------------------------------------------------
+		// 7) Warp temporal feedback
+		//-------------------------------------------------------------------------
+		uint FeedbackDims;
+		InFeedback.GetDimensions(FeedbackDims);
+		if (FeedbackDims == 1) // For the initial state with no feedback.
+		{
+			Result.WarpedFeedback = float4(0.0f, 0.0f, 0.0f, 0.0f);
+		}
+		else
+		{
+			Result.WarpedFeedback = ManualBilinear4(InFeedback, PrevFramePixelPos / (float2) InSceneColor_ViewportSize, InSceneColor_ViewportSize);
+		}
+
+		//-------------------------------------------------------------------------
+		// 9) Write Outputs
+		//-------------------------------------------------------------------------
+		OutLumaDerivativeAndLuma[InputPixelPos] = LumaDerivativeAndLuma;
+
+		// The closest depth offset is two numbers (x and y), each of which can be -1, 0 or 1. Both these values are packed into a single byte.
+		int2 Offset = int2(ClosestDepth.PixelPos) - int2(InputPixelPos);
+		uint EncodedOffset = EncodeClosestDepthOffset(Offset);
+		OutClosestDepthOffset[InputPixelPos] = EncodedOffset;
+
+		uint LinearPixelIdx = InputPixelPos.y * InSceneColor_ViewportSize.x + InputPixelPos.x;
+#if QUANTIZED
+		OutPreprocessed[LinearPixelIdx * 3 + 0] = Quantize(float4(Result.DownsampledTonemappedWarpedPrevFrameUpscaledColour.rgb, Result.JitteredTonemappedInput.r));
+		OutPreprocessed[LinearPixelIdx * 3 + 1] = Quantize(float4(Result.JitteredTonemappedInput.gb, Result.DisocclusionMask, Result.WarpedFeedback.r));
+		OutPreprocessed[LinearPixelIdx * 3 + 2] = Quantize(float4(Result.WarpedFeedback.gba, Result.LumaDerivative));
+#else
+		OutPreprocessed[LinearPixelIdx * 12 + 0] = Result.DownsampledTonemappedWarpedPrevFrameUpscaledColour.r;
+		OutPreprocessed[LinearPixelIdx * 12 + 1] = Result.DownsampledTonemappedWarpedPrevFrameUpscaledColour.g;
+		OutPreprocessed[LinearPixelIdx * 12 + 2] = Result.DownsampledTonemappedWarpedPrevFrameUpscaledColour.b;
+		OutPreprocessed[LinearPixelIdx * 12 + 3] = Result.JitteredTonemappedInput.r;
+		OutPreprocessed[LinearPixelIdx * 12 + 4] = Result.JitteredTonemappedInput.g;
+		OutPreprocessed[LinearPixelIdx * 12 + 5] = Result.JitteredTonemappedInput.b;
+		OutPreprocessed[LinearPixelIdx * 12 + 6] = Result.DisocclusionMask;
+		OutPreprocessed[LinearPixelIdx * 12 + 7] = Result.WarpedFeedback.r;
+		OutPreprocessed[LinearPixelIdx * 12 + 8] = Result.WarpedFeedback.g;
+		OutPreprocessed[LinearPixelIdx * 12 + 9] = Result.WarpedFeedback.b;
+		OutPreprocessed[LinearPixelIdx * 12 + 10] = Result.WarpedFeedback.a;
+		OutPreprocessed[LinearPixelIdx * 12 + 11] = Result.LumaDerivative;
+#endif
+	}
+}

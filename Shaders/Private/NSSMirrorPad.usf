@@ -1,0 +1,74 @@
+// SPDX-FileCopyrightText: Copyright 2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-License-Identifier: MIT
+
+#include "/Engine/Public/Platform.ush"
+#include "/Engine/Private/ScreenPass.ush"
+
+// Using complicated viewport to avoid issues when texture size doesn't match the viewport
+// (e.g. in editor render targets aren't resized properly).
+SCREEN_PASS_TEXTURE_VIEWPORT(InSceneColor)
+SamplerState InSceneColor_Sampler;
+Texture2D InSceneColor_Texture;
+
+SCREEN_PASS_TEXTURE_VIEWPORT(InSceneVelocity)
+SamplerState InSceneVelocity_Sampler;
+Texture2D InSceneVelocity_Texture;
+
+SCREEN_PASS_TEXTURE_VIEWPORT(InSceneDepth)
+SamplerState InSceneDepth_Sampler;
+Texture2D InSceneDepth_Texture;
+
+uint2 PaddingAfter;
+
+struct Outputs
+{
+	float4 OutColor : SV_Target0;
+	float2 OutVelocity : SV_Target1;
+	float OutDepth : SV_Depth;
+};
+
+
+// Note this function doesn't handle the texture coordinate being negative or larger than 2.0, 
+// and is probably quite suboptimal.
+float MirrorScalar(float x, int TextureSize)
+{
+	// This is the UV after which values are mirrored. Note this is smaller than 1.0, because we want to avoid 
+	// duplicating the last row/col of texels.
+	float MirrorBoundary = 1.0 - 0.5 / TextureSize;
+	
+	if (x < 1.0f)
+	{
+		return x;
+	}
+	else
+	{
+		return 2 * MirrorBoundary - x;
+	}
+}
+
+
+// Simulates the behaviour of a mirror sampler by remapping the given UV to be within the 0-1 range.
+float2 Mirror(float2 x, int2 TextureSize)
+{
+	return float2(MirrorScalar(x.x, TextureSize.x), MirrorScalar(x.y, TextureSize.y));
+}
+
+void MirrorPadPS(float4 SvPosition : SV_POSITION, out Outputs Outputs)
+{
+	uint2 OutputSize = InSceneColor_ViewportSize + PaddingAfter;
+
+	float2 ColorUvBeforeMirror = SvPosition.xy / (float2) InSceneColor_ViewportSize;
+	float2 ColorUvAfterMirror = Mirror(ColorUvBeforeMirror, InSceneColor_ViewportSize);
+	float2 ColorUvWithViewRect = InSceneColor_UVViewportMin + ColorUvAfterMirror * InSceneColor_UVViewportSize;
+	Outputs.OutColor = InSceneColor_Texture.SampleLevel(InSceneColor_Sampler, ColorUvWithViewRect, 0);
+	
+	float2 VelocityUvBeforeMirror = SvPosition.xy / (float2) InSceneVelocity_ViewportSize;
+	float2 VelocityUvAfterMirror = Mirror(VelocityUvBeforeMirror, InSceneVelocity_ViewportSize);
+	float2 VelocityUvWithViewRect = InSceneVelocity_UVViewportMin + VelocityUvAfterMirror * InSceneVelocity_UVViewportSize;
+	Outputs.OutVelocity = InSceneVelocity_Texture.SampleLevel(InSceneVelocity_Sampler, VelocityUvWithViewRect, 0);
+
+	float2 DepthUvBeforeMirror = SvPosition.xy / (float2) InSceneDepth_ViewportSize;
+	float2 DepthUvAfterMirror = Mirror(DepthUvBeforeMirror, InSceneDepth_ViewportSize);
+	float2 DepthUvWithViewRect = InSceneDepth_UVViewportMin + DepthUvAfterMirror * InSceneDepth_UVViewportSize;
+	Outputs.OutDepth = InSceneDepth_Texture.SampleLevel(InSceneDepth_Sampler, DepthUvWithViewRect, 0);
+}

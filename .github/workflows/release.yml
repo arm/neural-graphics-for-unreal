@@ -1,0 +1,41 @@
+# SPDX-FileCopyrightText: Copyright 2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-License-Identifier: MIT
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      name:
+        description: 'Name of release'
+        required: true
+        type: string
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Ensure the Content folder exists
+        run: mkdir -p Content
+          
+      - name: Download model and license from Hugging Face
+        run: |
+          wget --no-check-certificate https://huggingface.co/Arm/neural-super-sampling/resolve/f724cf3/nss_v0.1.0_int8.vgf -O "Content/nss_v0_1_0_int8.vgf"
+          wget --no-check-certificate https://huggingface.co/Arm/neural-super-sampling/resolve/f724cf3/Arm_AI_Model_Community_License_v1_0_PRE-1154.pdf -O "Content/Arm_AI_Model_Community_License_v1_0_PRE-1154.pdf"
+
+      - name: Create release zip
+        run: |
+          zip -r NSS.zip . -x ".git/*" -x ".github/*"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ inputs.name }}
+          tag_name: ${{ github.ref_name }}
+          draft: true
+          files: NSS.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
