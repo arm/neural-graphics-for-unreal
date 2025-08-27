@@ -19,7 +19,7 @@ class NSS_API UNSSSettings : public UObject
 
 public:
 	UPROPERTY(config, Category = Rendering, EditAnywhere)
-	TSoftObjectPtr<UNNEModelData> NSSModelData = TSoftObjectPtr<UNNEModelData>(FSoftObjectPath(TEXT("/NSS/nss_v0_1_0_int8.nss_v0_1_0_int8")));
+	TSoftObjectPtr<UNNEModelData> NSSModelData = TSoftObjectPtr<UNNEModelData>(FSoftObjectPath(TEXT("/NSS/nss_v0_1_1_int8.nss_v0_1_1_int8")));
 
 	UPROPERTY(config, Category = Rendering, EditAnywhere)
 	FString NNERuntime = "NNERuntimeRDGMLExtensionsForVulkan";

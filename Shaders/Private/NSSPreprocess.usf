@@ -195,7 +195,7 @@ float ComputeDisocclusionMask(float2 PrevFramePixelPos, float CurrentClosestDept
     // static conditions, reduces jitter differences across frames causing false flags
     if (length(VelocityPixels) < 0.5f)
     {
-        Result = Result * 0.617464542388916;
+        Result = Result * 0.8283293843269348;
     }
 
 	return Result;

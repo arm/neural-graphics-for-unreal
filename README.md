@@ -11,7 +11,7 @@ Neural Super Sampling is a mobile-optimized temporal upscaling technique that us
 
 This Unreal® Engine plugin provides an implementation of the Neural Super Sampling technique to be used with Unreal® projects. It implements the `UE::Renderer::Private::ITemporalUpscaler` interface provided by the engine so it can be integrated into your game.
 
-**This early release plugin is intended for image quality evaluation and algorithm inspection in a desktop environment. Runtime performance is not representative of what can be expected on mobile platforms. For a more optimized implementation of the shaders, refer to the following .comp files: https://huggingface.co/Arm/neural-super-sampling/tree/f724cf3/scenario**
+**This early release plugin is intended for image quality evaluation and algorithm inspection in a desktop environment. Runtime performance is not representative of what can be expected on mobile platforms. For a more optimized implementation of the shaders, refer to the following .comp files: https://huggingface.co/Arm/neural-super-sampling/tree/a90431d/scenario**
 
 This plugin uses Unreal® Neural Network Engine to perform inference of the machine learning model.
 
@@ -27,7 +27,7 @@ This plugin uses Unreal® Neural Network Engine to perform inference of the mach
 
 1. **If you downloaded this plugin from the *GitHub release package*, then skip this step.**
 
-    Make sure there is a `.vgf` file in the `Content` folder of this plugin. This is included as part of the *GitHub release package*, but is not part of the Git repository as it is an external dependency. It can be downloaded separately from https://huggingface.co/Arm/neural-super-sampling/resolve/f724cf3/nss_v0.1.0_int8.vgf. The file must be downloaded to `Content/nss_v0_1_0_int8.vgf`. (Note the change from periods to underscores)
+    Make sure there is a `.vgf` file in the `Content` folder of this plugin. This is included as part of the *GitHub release package*, but is not part of the Git repository as it is an external dependency. It can be downloaded separately from https://huggingface.co/Arm/neural-super-sampling/resolve/a90431d/nss_v0.1.1_int8.vgf. The file must be downloaded to `Content/nss_v0_1_1_int8.vgf`. (Note the change from periods to underscores)
 
 2. Copy this folder into the `Plugins/` folder in either your Unreal® `Engine` folder or your project folder.
 
