@@ -50,6 +50,9 @@ r.TemporalAA.Upscaling 1
 r.NSS.Enable 1
 ```
 
+The Unreal starter content is not optimized for mobile renderer preview. As a result, visual quality may appear degraded. This is not related to the NSS model or the NSS Plugins. If required, enabling FP32 for material expressions can improve preview quality, but this comes with a performance tradeoff (see Mali best practices - https://developer.arm.com/documentation/101897/0304/Shader-code/Minimize-precision?lang=en).
+
+
 ## Trademarks and Copyrights
 
 Arm® is a registered trademark of Arm Limited (or its subsidiaries) in the US and/or elsewhere.
