@@ -1,0 +1,3 @@
+[submodule "UE5.4/Source/NG-SDK"]
+	path = UE5.4/Source/NG-SDK
+	url = https://github.com/arm/neural-graphics-sdk-for-game-engines

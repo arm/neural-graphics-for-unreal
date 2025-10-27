@@ -1,10 +1,21 @@
 # SPDX-FileCopyrightText: Copyright 2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 # SPDX-License-Identifier: MIT
 
-Binaries/
-Intermediate/
+.vscode/
+.idea/
+*.sln
+*.code-workspace
+*.log
+
+UE5.4/Intermediate/
+UE5.4/Binaries/Win64/
+UE5.4/Binaries/Linux/
+UE5.4/Binaries/LinuxArm64/
+
+UE5.5/Binaries/
+UE5.5/Intermediate/
 *.vs
 # We don't check in the model file(s) (neither vgf nor uasset) as these belong to a separate repo.
 # The VGF file is copied here as part of the release process, and the uassset file is generated from this
 # automatically when first loading the editor.
-Content/
+UE5.5/Content/

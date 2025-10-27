@@ -19,12 +19,12 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Ensure the Content folder exists
-        run: mkdir -p Content
+        run: mkdir -p UE5.5/Content
           
       - name: Download model and license from Hugging Face
         run: |
-          wget --no-check-certificate https://huggingface.co/Arm/neural-super-sampling/resolve/a90431d/nss_v0.1.1_int8.vgf -O "Content/nss_v0_1_1_int8.vgf"
-          wget --no-check-certificate https://huggingface.co/Arm/neural-super-sampling/resolve/a90431d/Arm_AI_Model_Community_License_v1_0_PRE-1154.pdf -O "Content/Arm_AI_Model_Community_License_v1_0_PRE-1154.pdf"
+          wget --no-check-certificate https://huggingface.co/Arm/neural-super-sampling/resolve/a90431d/nss_v0.1.1_int8.vgf -O "UE5.5/Content/nss_v0_1_1_int8.vgf"
+          wget --no-check-certificate https://huggingface.co/Arm/neural-super-sampling/resolve/a90431d/Arm_AI_Model_Community_License_v1_0_PRE-1154.pdf -O "UE5.5/Content/Arm_AI_Model_Community_License_v1_0_PRE-1154.pdf"
 
       - name: Create release zip
         run: |

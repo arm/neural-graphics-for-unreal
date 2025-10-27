@@ -1,0 +1,22 @@
+# See https://pre-commit.com for more information
+# See https://pre-commit.com/hooks.html for more hooks
+
+minimum_pre_commit_version: 2.9.0
+
+default_language_version:
+      node: 16.18.1
+
+exclude: |
+    (?x)^(
+    Source/SmokeTests/.*|
+    Source/NG-SDK/.*
+    )$
+repos:
+    # global hooks
+    - repo: https://github.com/pre-commit/mirrors-clang-format
+      rev: v18.1.8
+      hooks:
+          - id: clang-format
+            alias: user-clang-format
+            description: A hook that checks the source code clang format.
+            files: \.(c|cc|cpp|cxx|h|hh|hpp|hxx|usf|hlsl)$

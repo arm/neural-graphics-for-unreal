@@ -1,0 +1,65 @@
+# See: https://clang.llvm.org/docs/ClangFormatStyleOptions.html
+
+Standard: C++11
+
+StatementMacros: [
+  "UCLASS",
+  "UENUM",
+  "UFUNCTION",
+  "UPROPERTY",
+  "USTRUCT",
+]
+
+BasedOnStyle: LLVM
+# Indentation
+TabWidth: 4
+UseTab: Always
+IndentWidth: 4
+IndentCaseBlocks: false
+IndentCaseLabels: true
+IndentPPDirectives: None
+ColumnLimit: 120
+AccessModifierOffset: -4
+NamespaceIndentation: All
+FixNamespaceComments: false
+
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterCaseLabel: true
+  AfterClass: true
+  AfterControlStatement: true
+  AfterEnum: true
+  AfterFunction: true
+  AfterNamespace: true
+  AfterObjCDeclaration: true
+  AfterStruct: true
+  AfterUnion: true
+  AfterExternBlock: true
+  BeforeCatch: true
+  BeforeElse: true
+  BeforeLambdaBody: true
+  BeforeWhile: true
+  IndentBraces: false
+  SplitEmptyFunction: false
+  SplitEmptyRecord: false
+  SplitEmptyNamespace: false
+
+BreakBeforeBinaryOperators: NonAssignment
+BreakBeforeTernaryOperators: false
+BreakConstructorInitializers: BeforeComma
+BreakInheritanceList: AfterColon
+BreakStringLiterals: false
+AlwaysBreakAfterReturnType: None
+AlignTrailingComments: false
+AlignAfterOpenBracket: DontAlign
+AlignEscapedNewlines: Left
+AlignConsecutiveMacros: false
+AllowAllParametersOfDeclarationOnNextLine: true
+AllowShortBlocksOnASingleLine: Empty
+AllowShortEnumsOnASingleLine: false
+AllowShortFunctionsOnASingleLine: Empty
+ConstructorInitializerAllOnOneLineOrOnePerLine: true
+PointerAlignment: Left
+SpaceBeforeCaseColon: false
+BinPackArguments: false
+BinPackParameters: false
