@@ -25,11 +25,9 @@
 #include "NSSModule.h"
 
 #include "CoreMinimal.h"
-#include "DataDrivenShaderPlatformInfo.h"
 #include "Interfaces/IPluginManager.h"
 #include "LogNSS.h"
 #include "Misc/ConfigCacheIni.h"
-#include "Misc/ConfigUtilities.h"
 #include "Misc/MessageDialog.h"
 #include "NSS.h"
 #include "NSSViewExtension.h"
@@ -42,13 +40,18 @@ DEFINE_LOG_CATEGORY(LogNSS);
 
 static bool GNSSModuleInit = false;
 
+static bool IsRunningCookCommandlet()
+{
+	FString Commandline = FCommandLine::Get();
+	const bool bIsCookCommandlet = IsRunningCommandlet() && Commandline.Contains(TEXT("run=cook"));
+	return bIsCookCommandlet;
+}
+
 void NSSModule::StartupModule()
 {
 	FString PluginShaderDir =
 		FPaths::Combine(IPluginManager::Get().FindPlugin(TEXT("NSS"))->GetBaseDir(), TEXT("Shaders"));
 	AddShaderSourceDirectoryMapping(TEXT("/Plugin/NSS"), PluginShaderDir);
-
-	FModuleManager::Get().LoadModuleChecked("NGVulkanBackend");
 
 	if (IsRunningCookCommandlet()) // Note this check needs to come after the shader source mapping, otherwise crashy
 	{
@@ -103,16 +106,12 @@ void NSSModule::OnPostEngineInit()
 				FString DllPath = FPaths::Combine(BaseDir, TEXT("ngsdk_windows_x64.dll"));
 				bool bDllExists = FPaths::FileExists(DllPath);
 
-				// clang-format off
-				FString Msg = FString::Printf(
-					TEXT("Failed to load the SDK DLL.\n\n"
-						"Check the following:\n"
-						"  DLL staged to: %s\n"
-						"  DLL present: %s\n"),
+				FString Msg = FString::Printf(TEXT("Failed to load the SDK DLL.\n\n"
+												   "Check the following:\n"
+												   "  DLL staged to: %s\n"
+												   "  DLL present: %s\n"),
 					*DllPath,
-					bDllExists ? TEXT("YES") : TEXT("NO")
-				);
-				// clang-format on
+					bDllExists ? TEXT("YES") : TEXT("NO"));
 
 				FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(Msg));
 				UE_LOG(LogNSS, Error, TEXT("%s"), *Msg);

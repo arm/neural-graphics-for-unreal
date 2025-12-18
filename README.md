@@ -7,10 +7,11 @@
 
 Neural Super Sampling is a mobile-optimized upscaling technique that uses machine learning to improve graphical fidelity, while reducing computational cost.
 
-This repository serves as a collection of two plugins to support different Unreal® Engine version, one plugin in folder `UE5.4` supports UE5.4, and the other plugin in folder `UE5.5` supports UE5.5. These two Unreal® Engine plugins provide two different implementations of the Neural Super Sampling technique to be used with Unreal® projects. They all implements the `UE::Renderer::Private::ITemporalUpscaler` interface provided by the engine, so you can integrate the corresponding plugin into your game.
+This repository serves as a collection of three plugins to support different Unreal® Engine version, one plugin in folder `UE4.27` supports UE4.27, one plugin in folder `UE5.4` supports UE5.4, and the other plugin in folder `UE5.5` supports UE5.5. These three Unreal® Engine plugins provide two different implementations of the Neural Super Sampling technique to be used with Unreal® projects, you can refer README for details. They all implements the `UE::Renderer::Private::ITemporalUpscaler` interface provided by the engine, so you can integrate the corresponding plugin into your game.
 
 For more details on both of these plugins and how to get started, please see below documents:
 
+* [NSS Plugin for UE4.27](./UE4.27/README.md)
 * [NSS Plugin for UE5.4](./UE5.4/README.md)
 * [NSS Plugin for UE5.5](./UE5.5/README.md)
 

@@ -8,8 +8,9 @@ default_language_version:
 
 exclude: |
     (?x)^(
-    Source/SmokeTests/.*|
-    Source/NG-SDK/.*
+    .*/Source/SmokeTests/.*|
+    .*/Source/NG-SDK/.*|
+    UE5.5/Source/NSS/.*
     )$
 repos:
     # global hooks

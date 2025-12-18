@@ -7,6 +7,11 @@
 *.code-workspace
 *.log
 
+UE4.27/Intermediate/
+UE4.27/Binaries/Win64/
+UE4.27/Binaries/Linux/
+UE4.27/Binaries/LinuxArm64/
+
 UE5.4/Intermediate/
 UE5.4/Binaries/Win64/
 UE5.4/Binaries/Linux/

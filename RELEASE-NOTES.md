@@ -1,9 +1,17 @@
+## Public v1.0.1 Release Notes
+
+- Bug fixes for Unreal® Engine 5.4 plugin:
+  - Change r.ScreenPercentage supported range to (0, 100).
+  - Set flags to improve performance and add dependent extension.
+  - Code clean up and remove unused code.
+- Added a new folder for Unreal® Engine 4.27 support.
+
 ## Public v1.0.0 Release Notes
 
 Arm®'s Neural Super Sampling (NSS) Plugins for Unreal® Engine 5.4 and 5.5 provide two different implementations of the NSS technique to support game developers. UE5.4 plugin is built on top of Neural Graphics SDK for Game Engines, UE5.5 plugin uses Unreal® Neural Network Engine to perform inference of the machine learning model.
 
 ## Limitations
-This is a Vulkan focused delivery so when using DirectX12 RHI this plugin will not be enabled for both UE5.4 and UE5.5 version. If you enable this plugin when using DirectX12 RHI, a warning windows will pop out on the screen.
+This is a Vulkan focused delivery so when using other RHI this plugin will not be enabled for both UE5.4 and UE5.5 version. If you enable this plugin when using other RHI, a warning windows will pop out on the screen.
 
 Please note this plugin is designed for desktop development using ML Emulation Layer for Vulkan for both UE5.4 and UE5.5 version. Thus the runtime performance is not indicative of real device performance.
 

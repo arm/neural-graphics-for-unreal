@@ -24,7 +24,6 @@
 
 #include "NSS.h"
 
-#include "DataDrivenShaderPlatformInfo.h"
 #include "HAL/IConsoleManager.h"
 #include "LegacyScreenPercentageDriver.h"
 #include "LogNSS.h"
@@ -32,7 +31,6 @@
 #include "NSSHistory.h"
 #include "NSSInclude.h"
 #include "NSSModule.h"
-#include "NSSProxy.h"
 #include "PixelShaderUtils.h"
 #include "PlanarReflectionSceneProxy.h"
 #include "PostProcess/SceneRenderTargets.h"
@@ -43,7 +41,9 @@
 #include "Serialization/MemoryLayout.h"
 #include "TranslucentRendering.h"
 
-DECLARE_GPU_STAT(ArmNSSPass)
+#define GFrameCounterRenderThread GFrameNumberRenderThread
+
+DECLARE_GPU_STAT(ArmNSSPass);
 
 namespace
 {
@@ -102,9 +102,9 @@ struct NSSPass
 		RDG_TEXTURE_ACCESS(DepthTexture, ERHIAccess::SRVMask)
 		RDG_TEXTURE_ACCESS(DepthTm1Texture, ERHIAccess::SRVMask)
 		RDG_TEXTURE_ACCESS(VelocityTexture, ERHIAccess::SRVMask)
+		RDG_TEXTURE_ACCESS(OutputTexture, ERHIAccess::UAVMask)
+		RDG_TEXTURE_ACCESS(DebugViewsTexture, ERHIAccess::UAVMask)
 		SHADER_PARAMETER(float, ExposureValue)
-		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float4>, OutputTexture)
-		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float4>, DebugViewsTexture)
 	END_SHADER_PARAMETER_STRUCT()
 	// clang-format on
 };
@@ -314,7 +314,7 @@ void NSS::Initialize() const
 					Error,
 					TEXT("NSS initialization failed due to unsupported device capabilities. Disabling NSS."
 						"\nPlease use Vulkan Configurator to enable Vulkan ML Emulation layers, and then restart the game."
-					));
+				));
 				// clang-format on
 			}
 			else
@@ -323,6 +323,7 @@ void NSS::Initialize() const
 			}
 			Api = EFFXBackendAPI::Unsupported;
 		}
+
 		if (!WrappedDenoiser)
 		{
 			// Wrap any existing denoiser API as we override this to be able to generate the reactive mask.
@@ -340,28 +341,38 @@ namespace
 		return ((in + multiple - 1) / multiple) * multiple;
 	}
 
-	INSS::FOutputs BlankOutput(FRDGBuilder& GraphBuilder, const INSS::FInputs& Inputs)
+	FScreenPassTexture BlankOutput(FRDGBuilder& GraphBuilder, const NSSPassInput& Inputs, FIntPoint OutputExtents)
 	{
-		INSS::FOutputs Outputs;
+		FScreenPassTexture OutputsFullRes;
 
-		FRDGTextureDesc OutputColorDesc = Inputs.SceneColor.Texture->Desc;
-		OutputColorDesc.Extent = Inputs.OutputViewRect.Size();
+		FRDGTextureDesc OutputColorDesc = Inputs.SceneColorTexture->Desc;
+		OutputColorDesc.Extent = OutputExtents;
 		OutputColorDesc.Flags = TexCreate_RenderTargetable | TexCreate_ShaderResource;
-		Outputs.FullRes.Texture = GraphBuilder.CreateTexture(
+		OutputsFullRes.Texture = GraphBuilder.CreateTexture(
 			OutputColorDesc, TEXT("ArmNssDisabledOutputSceneColor"), ERDGTextureFlags::MultiFrame);
-		Outputs.FullRes.ViewRect = Inputs.OutputViewRect;
+		OutputsFullRes.ViewRect = FIntRect(FIntPoint::ZeroValue, OutputExtents);
 
-		AddClearRenderTargetPass(GraphBuilder, Outputs.FullRes.Texture, FLinearColor(1.0f, 1.0f, 0.0f));
+		AddClearRenderTargetPass(GraphBuilder, OutputsFullRes.Texture, FLinearColor(1.0f, 1.0f, 0.0f));
 
-		Outputs.NewHistory = new NSSHistory(nullptr, nullptr);
-
-		return Outputs;
+		return OutputsFullRes;
 	}
 }
 
-INSS::FOutputs NSS::AddPasses(FRDGBuilder& GraphBuilder, const NSSView& SceneView, const NSSPassInput& PassInputs) const
+void NSS::AddPasses(FRDGBuilder& GraphBuilder,
+	const NSSView& SceneView,
+	const NSSPassInput& PassInputs,
+	FRDGTextureRef* OutSceneColorTexture,
+	FIntRect* OutSceneColorViewRect,
+	FRDGTextureRef* OutSceneColorHalfResTexture,
+	FIntRect* OutSceneColorHalfResViewRect) const
 {
-	const FViewInfo& View = (FViewInfo&)(SceneView);
+	if (!OutSceneColorTexture || !OutSceneColorViewRect || !OutSceneColorHalfResTexture
+		|| !OutSceneColorHalfResViewRect)
+	{
+		return;
+	}
+
+	const NSSView& View = SceneView;
 	FGlobalShaderMap* ShaderMap = GetGlobalShaderMap(View.GetFeatureLevel());
 	FIntPoint InputExtents = View.ViewRect.Size();
 	FIntPoint OutputExtents = View.GetSecondaryViewRectSize();
@@ -381,7 +392,12 @@ INSS::FOutputs NSS::AddPasses(FRDGBuilder& GraphBuilder, const NSSView& SceneVie
 	bool bHistoryValid = View.PrevViewInfo.TemporalAAHistory.IsValid() && View.ViewState && !View.bCameraCut;
 	const bool CanWritePrevViewInfo = !View.bStatePrevViewInfoIsReadOnly && View.ViewState;
 	const bool bRenderDebugViews = CVarNSSDebug.GetValueOnRenderThread() == 1;
-	ITemporalUpscaler::FOutputs Outputs;
+	FRDGTextureRef SceneColor = PassInputs.SceneColorTexture;
+	FRDGTextureRef SceneDepth = PassInputs.SceneDepthTexture;
+	FRDGTextureRef SceneVelocity = PassInputs.SceneVelocityTexture;
+	FScreenPassTexture PaddedInputColor(SceneColor);
+	FScreenPassTexture PaddedInputDepth(SceneDepth);
+	FScreenPassTexture PaddedInputVelocity(SceneVelocity);
 	// Note that the texture extent might be LARGER than the ViewRect, as in the editor it won't shrink the render
 	// target if the viewport is shrunk (as an optimisation presumably).
 	// The network requires the inputs to be a multiple of 8 in both width and height (i.e. a 540p input frame
@@ -393,35 +409,34 @@ INSS::FOutputs NSS::AddPasses(FRDGBuilder& GraphBuilder, const NSSView& SceneVie
 	//      545 pads to 552.
 	//      552 * 2 =  1104
 	//      1104 - 1090 = 14
-	FIntPoint PaddedInputSize = RoundUpToMultiple(PassInputs.SceneColor.ViewRect.Size(), 8);
-	FIntPoint PaddingOnInput = PaddedInputSize - PassInputs.SceneColor.ViewRect.Size();
-	FVector2d ScaledPaddedInputSizeF = FVector2d(PaddedInputSize) * UpscaleRatio;
+	FIntPoint PaddedInputSize = RoundUpToMultiple(InputExtents, 8);
+	FIntPoint PaddingOnInput = PaddedInputSize - InputExtents;
+	FVector2D ScaledPaddedInputSizeF = FVector2D(PaddedInputSize) * UpscaleRatio;
 	FIntPoint PaddedOutputSize =
 		FIntPoint(FMath::RoundToInt(ScaledPaddedInputSizeF.X), FMath::RoundToInt(ScaledPaddedInputSizeF.Y));
-	FIntPoint PaddingOnOutput = PaddedOutputSize - PassInputs.OutputViewRect.Size();
+	FIntPoint PaddingOnOutput = PaddedOutputSize - OutputExtents;
 	// Copy the input scene color, depth and velocity textures and add padding around the edges if necessary
-	FScreenPassTexture PaddedInputColor = PassInputs.SceneColor;
-	FScreenPassTexture PaddedInputDepth = PassInputs.SceneDepth;
-	FScreenPassTexture PaddedInputVelocity = PassInputs.SceneVelocity;
+	FScreenPassTexture ScreenPassSceneColor(SceneColor);
+	FScreenPassTexture ScreenPassSceneDepth(SceneDepth);
+	FScreenPassTexture ScreenPassSceneVelocity(SceneVelocity);
 	if (PaddingOnInput != FIntPoint::ZeroValue)
 	{
-		FRDGTextureDesc ColorPaddedDesc = PassInputs.SceneColor.Texture->Desc;
-		ColorPaddedDesc.Extent = PassInputs.SceneColor.ViewRect.Size() + PaddingOnInput;
+		FRDGTextureDesc ColorPaddedDesc = SceneColor->Desc;
+		ColorPaddedDesc.Extent = PaddedInputSize;
 		ColorPaddedDesc.Flags |= TexCreate_RenderTargetable;
 		PaddedInputColor.Texture = GraphBuilder.CreateTexture(
 			ColorPaddedDesc, TEXT("ArmNssPaddedInputSceneColor"), ERDGTextureFlags::MultiFrame);
 		// Note: the ViewRect on the output is the full texture, as we allocate one of the exact correct size
 		PaddedInputColor.ViewRect = FIntRect(FIntPoint::ZeroValue, ColorPaddedDesc.Extent);
-		FRDGTextureDesc VelocityPaddedDesc = PassInputs.SceneVelocity.Texture->Desc;
-		VelocityPaddedDesc.Extent = PassInputs.SceneVelocity.ViewRect.Size() + PaddingOnInput;
-		VelocityPaddedDesc.Flags |= TexCreate_RenderTargetable;
+		FRDGTextureDesc VelocityPaddedDesc = SceneVelocity->Desc;
+		VelocityPaddedDesc.Extent = PaddedInputSize;
 		PaddedInputVelocity.Texture = GraphBuilder.CreateTexture(
 			VelocityPaddedDesc, TEXT("ArmNssPaddedInputSceneVelocity"), ERDGTextureFlags::MultiFrame);
 		// Note: the ViewRect on the output is the full texture, as we allocate one of the exact correct size
 		PaddedInputVelocity.ViewRect = FIntRect(FIntPoint::ZeroValue, VelocityPaddedDesc.Extent);
-		FRDGTextureDesc DepthPaddedDesc = PassInputs.SceneDepth.Texture->Desc;
+		FRDGTextureDesc DepthPaddedDesc = SceneDepth->Desc;
 		DepthPaddedDesc.Format = PF_DepthStencil;
-		DepthPaddedDesc.Extent = PassInputs.SceneDepth.ViewRect.Size() + PaddingOnInput;
+		DepthPaddedDesc.Extent = PaddedInputSize;
 		DepthPaddedDesc.Flags = DepthPaddedDesc.Flags & ~TexCreate_UAV;
 		DepthPaddedDesc.Flags = DepthPaddedDesc.Flags & ~TexCreate_RenderTargetable;
 		DepthPaddedDesc.Flags |= TexCreate_DepthStencilTargetable;
@@ -431,11 +446,11 @@ INSS::FOutputs NSS::AddPasses(FRDGBuilder& GraphBuilder, const NSSView& SceneVie
 		PaddedInputDepth.ViewRect = FIntRect(FIntPoint::ZeroValue, DepthPaddedDesc.Extent);
 		FNssMirrorPadPS::FParameters* PassParameters = GraphBuilder.AllocParameters<FNssMirrorPadPS::FParameters>();
 		PassParameters->InSceneColor =
-			GetScreenPassTextureInput(PassInputs.SceneColor, TStaticSamplerState<SF_Point>::GetRHI());
+			GetScreenPassTextureInput(ScreenPassSceneColor, TStaticSamplerState<SF_Point>::GetRHI());
 		PassParameters->InSceneVelocity =
-			GetScreenPassTextureInput(PassInputs.SceneVelocity, TStaticSamplerState<SF_Point>::GetRHI());
+			GetScreenPassTextureInput(ScreenPassSceneVelocity, TStaticSamplerState<SF_Point>::GetRHI());
 		PassParameters->InSceneDepth =
-			GetScreenPassTextureInput(PassInputs.SceneDepth, TStaticSamplerState<SF_Point>::GetRHI());
+			GetScreenPassTextureInput(ScreenPassSceneDepth, TStaticSamplerState<SF_Point>::GetRHI());
 		PassParameters->RenderTargets[0] =
 			FRenderTargetBinding(PaddedInputColor.Texture, ERenderTargetLoadAction::ENoAction);
 		PassParameters->RenderTargets[1] =
@@ -455,14 +470,9 @@ INSS::FOutputs NSS::AddPasses(FRDGBuilder& GraphBuilder, const NSSView& SceneVie
 			TStaticDepthStencilState<true, CF_Always>::GetRHI());
 	}
 	NSSStateRef CurrentNSSState;
-	TRefCountPtr<INSSCustomHistory> PrevCustomHistory = PassInputs.PrevHistory;
-	if (PrevCustomHistory.IsValid() && (PrevCustomHistory->GetDebugName() != GetDebugName()))
-	{
-		PrevCustomHistory.SafeRelease();
-	}
+	const TRefCountPtr<INSSCustomHistory> PrevCustomHistory = View.PrevViewInfo.CustomTemporalAAHistory;
 	NSSHistory* CustomHistory = static_cast<NSSHistory*>(PrevCustomHistory.GetReference());
 	bool HasValidContext = CustomHistory && CustomHistory->GetState().IsValid();
-	TRefCountPtr<NSSHistory> NewHistory;
 	//--------------------------------------------------------------------------------------------------------------
 	// Initialize the NSS Context
 	//   If a context has never been created, or if significant features of the frame have changed since the current
@@ -553,7 +563,6 @@ INSS::FOutputs NSS::AddPasses(FRDGBuilder& GraphBuilder, const NSSView& SceneVie
 			// For a new context, allocate the necessary scratch memory for the chosen backend
 			CurrentNSSState = new NSSState(ApiAccessor);
 		}
-		check(CurrentNSSState);
 		CurrentNSSState->LastUsedFrame = GFrameCounterRenderThread;
 		CurrentNSSState->ViewID = View.ViewState->UniqueID;
 		//----------------------------------------------------------------------------------------------------------
@@ -569,10 +578,12 @@ INSS::FOutputs NSS::AddPasses(FRDGBuilder& GraphBuilder, const NSSView& SceneVie
 			View.ViewState->PrevFrameViewInfo.TemporalAAHistory.ViewportRect =
 				FIntRect(0, 0, OutputExtents.X, OutputExtents.Y);
 			View.ViewState->PrevFrameViewInfo.TemporalAAHistory.ReferenceBufferSize = OutputExtents;
+			if (!View.ViewState->PrevFrameViewInfo.CustomTemporalAAHistory.GetReference())
+			{
+				View.ViewState->PrevFrameViewInfo.CustomTemporalAAHistory =
+					new NSSHistory(CurrentNSSState, const_cast<NSS*>(this));
+			}
 		}
-		NewHistory = new NSSHistory(CurrentNSSState, const_cast<NSS*>(this));
-		check(NewHistory);
-
 		//----------------------------------------------------------------------------------------------------------
 		// Invalidate NSS Contexts
 		//   If a context already exists but it is not valid for the current frame's features, clean it up in
@@ -599,7 +610,12 @@ INSS::FOutputs NSS::AddPasses(FRDGBuilder& GraphBuilder, const NSSView& SceneVie
 			check(ErrorCode == FFX_OK);
 			if (ErrorCode != FFX_OK)
 			{
-				return BlankOutput(GraphBuilder, PassInputs);
+				FScreenPassTexture FullResOutputs = BlankOutput(GraphBuilder, PassInputs, OutputExtents);
+				*OutSceneColorTexture = FullResOutputs.Texture;
+				*OutSceneColorViewRect = FullResOutputs.ViewRect;
+				*OutSceneColorHalfResTexture = nullptr;
+				*OutSceneColorHalfResViewRect = FIntRect::DivideAndRoundUp(*OutSceneColorViewRect, 2);
+				return;
 			}
 			HasValidContext = true;
 			bHistoryValid = false;
@@ -611,17 +627,19 @@ INSS::FOutputs NSS::AddPasses(FRDGBuilder& GraphBuilder, const NSSView& SceneVie
 	//   Some inputs NSS requires are available now, but will no longer be directly available once we get inside
 	//   the RenderGraph.  Go ahead and collect the ones we can.
 	//--------------------------------------------------------------------------------------------------------------
-	ffxApiDispatchDescNss NssDispatchParams = {};
+	ffxApiDispatchDescNss* NssDispatchParamsPtr = new ffxApiDispatchDescNss;
+	ffxApiDispatchDescNss& NssDispatchParams = *NssDispatchParamsPtr;
+	FMemory::Memzero(NssDispatchParams);
 	{
 		NssDispatchParams.header.type = FFX_API_DISPATCH_DESC_TYPE_NSS;
 		NssDispatchParams.flags = 0;
 		NssDispatchParams.flags |= bRenderDebugViews ? FFX_API_NSS_DISPATCH_FLAG_DRAW_DEBUG_VIEW : 0;
 		// Whether to abandon the history in the state on camera cuts
 		NssDispatchParams.reset = !bHistoryValid;
-		NssDispatchParams.frameTimeDelta = View.Family->Time.GetDeltaWorldTimeSeconds() * 1000.f;
+		NssDispatchParams.frameTimeDelta = View.Family->DeltaWorldTime * 1000.f;
 		// Reference shaders use subtraction of jitter and it's in input resolution units, instead of UV units.
-		NssDispatchParams.jitterOffset.x = -PassInputs.TemporalJitterPixels.X;
-		NssDispatchParams.jitterOffset.y = -PassInputs.TemporalJitterPixels.Y;
+		NssDispatchParams.jitterOffset.x = -View.TemporalJitterPixels.X;
+		NssDispatchParams.jitterOffset.y = -View.TemporalJitterPixels.Y;
 		NssDispatchParams.renderSize.width = PaddedInputSize.X;
 		NssDispatchParams.renderSize.height = PaddedInputSize.Y;
 		NssDispatchParams.upscaleSize.width = PaddedOutputSize.X;
@@ -633,20 +651,20 @@ INSS::FOutputs NSS::AddPasses(FRDGBuilder& GraphBuilder, const NSSView& SceneVie
 		if (bool(ERHIZBuffer::IsInverted))
 		{
 			NssDispatchParams.cameraNear = FLT_MAX;
-			NssDispatchParams.cameraFar = View.ViewMatrices.ComputeNearPlane();
+			NssDispatchParams.cameraFar = GNearClippingPlane;
 		}
 		else
 		{
-			NssDispatchParams.cameraNear = View.ViewMatrices.ComputeNearPlane();
+			NssDispatchParams.cameraNear = GNearClippingPlane;
 			NssDispatchParams.cameraFar = FLT_MAX;
 		}
 	}
 	//------------------------------
 	// Add NSS to the RenderGraph
 	//------------------------------
-	FRDGTextureDesc PaddedOutputColorDesc = PassInputs.SceneColor.Texture->Desc;
+	FRDGTextureDesc PaddedOutputColorDesc = SceneColor->Desc;
 	PaddedOutputColorDesc.Extent = PaddedOutputSize;
-	PaddedOutputColorDesc.Flags = TexCreate_ShaderResource | TexCreate_UAV;
+	PaddedOutputColorDesc.Flags = TexCreate_ShaderResource | TexCreate_UAV | TexCreate_RenderTargetable;
 	PaddedOutputColorDesc.Format = EPixelFormat::PF_FloatR11G11B10;
 	FRDGTextureRef PaddedOutputColor = GraphBuilder.CreateTexture(
 		PaddedOutputColorDesc, TEXT("ArmNSSPaddedOutputSceneColor"), ERDGTextureFlags::MultiFrame);
@@ -654,17 +672,13 @@ INSS::FOutputs NSS::AddPasses(FRDGBuilder& GraphBuilder, const NSSView& SceneVie
 	PassParameters->ColorTexture = PaddedInputColor.Texture;
 	PassParameters->DepthTexture = PaddedInputDepth.Texture;
 	PassParameters->VelocityTexture = PaddedInputVelocity.Texture;
-	PassParameters->OutputTexture = GraphBuilder.CreateUAV(PaddedOutputColor);
+	PassParameters->OutputTexture = PaddedOutputColor;
 	FRDGTextureRef DebugViews{};
 	if (bRenderDebugViews)
 	{
 		DebugViews =
 			GraphBuilder.CreateTexture(PaddedOutputColorDesc, TEXT("ArmNSSDebugViews"), ERDGTextureFlags::MultiFrame);
-		PassParameters->DebugViewsTexture = GraphBuilder.CreateUAV(DebugViews);
-	}
-	else
-	{
-		PassParameters->DebugViewsTexture = nullptr;
+		PassParameters->DebugViewsTexture = DebugViews;
 	}
 	if (CustomHistory != nullptr && CustomHistory->PaddedUpscaledColour.IsValid())
 	{
@@ -690,20 +704,11 @@ INSS::FOutputs NSS::AddPasses(FRDGBuilder& GraphBuilder, const NSSView& SceneVie
 		// Consolidate Motion Vectors
 		//   UE4 motion vectors are in sparse format by default.  Convert them to a format consumable by NSS.
 		//------------------------------------------------------------------------------------------------------
-		if (!IsValidRef(MotionVectorRT) || MotionVectorRT->GetDesc().Extent.X != PaddedInputSize.X
-			|| MotionVectorRT->GetDesc().Extent.Y != PaddedInputSize.Y)
-		{
-			ETextureCreateFlags DescFlags = TexCreate_ShaderResource | TexCreate_UAV | TexCreate_RenderTargetable;
-			FPooledRenderTargetDesc Desc(FPooledRenderTargetDesc::Create2DDesc(PaddedInputSize,
-				PF_G16R16F,
-				FClearValueBinding::Transparent,
-				DescFlags,
-				TexCreate_ShaderResource | TexCreate_UAV | TexCreate_RenderTargetable,
-				false));
-			GRenderTargetPool.FindFreeElement(
-				GraphBuilder.RHICmdList, Desc, MotionVectorRT, TEXT("NSSMotionVectorTexture"));
-		}
-		FRDGTextureRef MotionVectorTexture = GraphBuilder.RegisterExternalTexture(MotionVectorRT);
+		FRDGTextureDesc Desc = FRDGTextureDesc::Create2D(PaddedInputSize,
+			PF_G16R16F,
+			FClearValueBinding::Black,
+			TexCreate_ShaderResource | TexCreate_UAV | TexCreate_RenderTargetable);
+		FRDGTextureRef MotionVectorTexture = GraphBuilder.CreateTexture(Desc, TEXT("NSSMotionVectorTexture"));
 		{
 			FNssConvertVelocity::FParameters* MvPassParameters =
 				GraphBuilder.AllocParameters<FNssConvertVelocity::FParameters>();
@@ -714,7 +719,7 @@ INSS::FOutputs NSS::AddPasses(FRDGBuilder& GraphBuilder, const NSSView& SceneVie
 			MvPassParameters->InputDepth = GraphBuilder.CreateSRV(DepthDesc);
 			MvPassParameters->InputVelocity = GraphBuilder.CreateSRV(VelocityDesc);
 			FIntPoint Size = PaddedInputVelocity.ViewRect.Size();
-			MvPassParameters->InvContentSize = FVector2f(1.0f / float(Size.X), 1.0f / float(Size.Y));
+			MvPassParameters->InvContentSize = FVector2D(1.0f / float(Size.X), 1.0f / float(Size.Y));
 			MvPassParameters->View = View.ViewUniformBuffer;
 			const FScreenPassRenderTarget MotionVectorNewRT(
 				MotionVectorTexture, PaddedInputVelocity.ViewRect, ERenderTargetLoadAction::ENoAction);
@@ -732,10 +737,11 @@ INSS::FOutputs NSS::AddPasses(FRDGBuilder& GraphBuilder, const NSSView& SceneVie
 		GraphBuilder.AddPass(RDG_EVENT_NAME("ArmNG NSS (VK backend)"),
 			PassParameters,
 			ERDGPassFlags::Compute | ERDGPassFlags::Raster | ERDGPassFlags::SkipRenderPass,
-			[&View, &PassInputs, CurrentApi, ApiAccess, PassParameters, NssDispatchParams, CurrentNSSState](
+			[&View, &PassInputs, CurrentApi, ApiAccess, PassParameters, NssDispatchParamsPtr, CurrentNSSState](
 				FRHICommandListImmediate& RHICmdList)
 			{
-				ffxApiDispatchDescNss DispatchParams = NssDispatchParams;
+				ffxApiDispatchDescNss DispatchParams = *NssDispatchParamsPtr;
+				delete NssDispatchParamsPtr;
 				DispatchParams.color = ApiAccess->GetNativeResource(
 					PassParameters->ColorTexture->GetRHI(), FFX_API_RESOURCE_STATE_COMPUTE_READ);
 				DispatchParams.depth = ApiAccess->GetNativeResource(
@@ -747,7 +753,7 @@ INSS::FOutputs NSS::AddPasses(FRDGBuilder& GraphBuilder, const NSSView& SceneVie
 				DispatchParams.outputTm1 = ApiAccess->GetNativeResource(
 					PassParameters->OutputTm1Texture.GetTexture(), FFX_API_RESOURCE_STATE_COMPUTE_READ);
 				DispatchParams.output = ApiAccess->GetNativeResource(
-					PassParameters->OutputTexture->GetParentRHI(), FFX_API_RESOURCE_STATE_UNORDERED_ACCESS);
+					PassParameters->OutputTexture.GetTexture(), FFX_API_RESOURCE_STATE_UNORDERED_ACCESS);
 				DispatchParams.exposure = PassParameters->ExposureValue;
 				PassParameters->ColorTexture->MarkResourceAsUsed();
 				PassParameters->DepthTexture->MarkResourceAsUsed();
@@ -758,11 +764,11 @@ INSS::FOutputs NSS::AddPasses(FRDGBuilder& GraphBuilder, const NSSView& SceneVie
 				if (PassParameters->DebugViewsTexture)
 				{
 					DispatchParams.debugViews = ApiAccess->GetNativeResource(
-						PassParameters->DebugViewsTexture->GetParentRHI(), FFX_API_RESOURCE_STATE_UNORDERED_ACCESS);
+						PassParameters->DebugViewsTexture.GetTexture(), FFX_API_RESOURCE_STATE_UNORDERED_ACCESS);
 					PassParameters->DebugViewsTexture->MarkResourceAsUsed();
 				}
 				ApiAccess->ForceUAVTransition(
-					RHICmdList, PassParameters->OutputTexture->GetParentRHI(), ERHIAccess::UAVMask);
+					RHICmdList, PassParameters->OutputTexture.GetTexture()->GetRHI(), ERHIAccess::UAVMask);
 				RHICmdList.EnqueueLambda(
 					[ApiAccess, CurrentNSSState, DispatchParams](FRHICommandListImmediate& cmd) mutable
 					{
@@ -773,19 +779,27 @@ INSS::FOutputs NSS::AddPasses(FRDGBuilder& GraphBuilder, const NSSView& SceneVie
 				RHICmdList.ImmediateFlush(EImmediateFlushType::DispatchToRHIThread);
 			});
 	}
-
+	else
+	{
+		delete NssDispatchParamsPtr;
+	}
+	FScreenPassTexture FullResOutputs;
 	if (bRenderDebugViews)
 	{
 		// Output Debug Views
-		Outputs.FullRes = CopyAndCropIfNeeded(
+		FullResOutputs = CopyAndCropIfNeeded(
 			GraphBuilder, FScreenPassTexture(DebugViews), PaddingOnOutput, TEXT("ArmNssOutputDebugViews"));
 	}
 	else
 	{
 		// Output Final Colour
-		Outputs.FullRes = CopyAndCropIfNeeded(
+		FullResOutputs = CopyAndCropIfNeeded(
 			GraphBuilder, FScreenPassTexture(PaddedOutputColor), PaddingOnOutput, TEXT("ArmNssOutputSceneColor"));
 	}
+	*OutSceneColorTexture = FullResOutputs.Texture;
+	*OutSceneColorViewRect = FullResOutputs.ViewRect;
+	*OutSceneColorHalfResTexture = nullptr;
+	*OutSceneColorHalfResViewRect = FIntRect::DivideAndRoundUp(*OutSceneColorViewRect, 2);
 	//--------------------------------------------------------------------------------------------------------------
 	// Update History Data (Part 2)
 	//   Extract the output produced by the NSS Dispatch into the history reference we prepared to receive that
@@ -796,23 +810,19 @@ INSS::FOutputs NSS::AddPasses(FRDGBuilder& GraphBuilder, const NSSView& SceneVie
 		// Check 'CanWritePrevViewInfo' before QueueTextureExtraction. Avoid extracting textures while paused,
 		// keeping behavior consistent with engine resources like TemporalAA that skip history
 		// updates such as when the world is paused.
-		GraphBuilder.QueueTextureExtraction(PaddedOutputColor, &NewHistory->PaddedUpscaledColour);
-		GraphBuilder.QueueTextureExtraction(PaddedInputDepth.Texture, &NewHistory->PaddedDepth);
 		GraphBuilder.QueueTextureExtraction(
 			PaddedOutputColor, &View.ViewState->PrevFrameViewInfo.TemporalAAHistory.RT[0]);
+		check(IsValidRef(View.ViewState->PrevFrameViewInfo.CustomTemporalAAHistory));
+		NSSHistory* NewHistory =
+			static_cast<NSSHistory*>(View.ViewState->PrevFrameViewInfo.CustomTemporalAAHistory.GetReference());
+		GraphBuilder.QueueTextureExtraction(PaddedOutputColor, &NewHistory->PaddedUpscaledColour);
+		GraphBuilder.QueueTextureExtraction(PaddedInputDepth.Texture, &NewHistory->PaddedDepth);
 	}
-	Outputs.NewHistory = NewHistory;
+
+	View.ViewState->TemporalAASampleIndex = FMath::Clamp(View.ViewState->TemporalAASampleIndex, int8(0), MAX_int8);
+
 	DeferredCleanup(GFrameCounterRenderThread);
-	return Outputs;
-}
-
-INSS* NSS::Fork_GameThread(const class FSceneViewFamily& InViewFamily) const
-{
-	Initialize();
-
-	INSSModule& NSSModuleInterface = FModuleManager::GetModuleChecked<INSSModule>(TEXT("NSS"));
-
-	return new NSSProxy(NSSModuleInterface.GetNSSUpscaler());
+	return;
 }
 
 float NSS::GetMinUpsampleResolutionFraction() const
@@ -948,7 +958,7 @@ IScreenSpaceDenoiser::FAmbientOcclusionOutputs NSS::DenoiseAmbientOcclusion(FRDG
 		GraphBuilder, View, PreviousViewInfos, SceneTextures, ReflectionInputs, RayTracingConfig);
 }
 
-FSSDSignalTextures NSS::DenoiseDiffuseIndirect(FRDGBuilder& GraphBuilder,
+IScreenSpaceDenoiser::FDiffuseIndirectOutputs NSS::DenoiseDiffuseIndirect(FRDGBuilder& GraphBuilder,
 	const FViewInfo& View,
 	FPreviousViewInfo* PreviousViewInfos,
 	const FSceneTextureParameters& SceneTextures,
@@ -985,15 +995,26 @@ IScreenSpaceDenoiser::FDiffuseIndirectOutputs NSS::DenoiseSkyLight(FRDGBuilder& 
 	return WrappedDenoiser->DenoiseSkyLight(GraphBuilder, View, PreviousViewInfos, SceneTextures, Inputs, Config);
 }
 
-FSSDSignalTextures NSS::DenoiseDiffuseIndirectHarmonic(FRDGBuilder& GraphBuilder,
+IScreenSpaceDenoiser::FDiffuseIndirectOutputs NSS::DenoiseReflectedSkyLight(FRDGBuilder& GraphBuilder,
+	const FViewInfo& View,
+	FPreviousViewInfo* PreviousViewInfos,
+	const FSceneTextureParameters& SceneTextures,
+	const FDiffuseIndirectInputs& Inputs,
+	const FAmbientOcclusionRayTracingConfig Config) const
+{
+	return WrappedDenoiser->DenoiseReflectedSkyLight(
+		GraphBuilder, View, PreviousViewInfos, SceneTextures, Inputs, Config);
+}
+
+IScreenSpaceDenoiser::FDiffuseIndirectHarmonic NSS::DenoiseDiffuseIndirectHarmonic(FRDGBuilder& GraphBuilder,
 	const FViewInfo& View,
 	FPreviousViewInfo* PreviousViewInfos,
 	const FSceneTextureParameters& SceneTextures,
 	const FDiffuseIndirectHarmonic& Inputs,
-	const HybridIndirectLighting::FCommonParameters& CommonDiffuseParameters) const
+	const FAmbientOcclusionRayTracingConfig Config) const
 {
 	return WrappedDenoiser->DenoiseDiffuseIndirectHarmonic(
-		GraphBuilder, View, PreviousViewInfos, SceneTextures, Inputs, CommonDiffuseParameters);
+		GraphBuilder, View, PreviousViewInfos, SceneTextures, Inputs, Config);
 }
 
 bool NSS::SupportsScreenSpaceDiffuseIndirectDenoiser(EShaderPlatform Platform) const
@@ -1001,7 +1022,7 @@ bool NSS::SupportsScreenSpaceDiffuseIndirectDenoiser(EShaderPlatform Platform) c
 	return WrappedDenoiser->SupportsScreenSpaceDiffuseIndirectDenoiser(Platform);
 }
 
-FSSDSignalTextures NSS::DenoiseScreenSpaceDiffuseIndirect(FRDGBuilder& GraphBuilder,
+IScreenSpaceDenoiser::FDiffuseIndirectOutputs NSS::DenoiseScreenSpaceDiffuseIndirect(FRDGBuilder& GraphBuilder,
 	const FViewInfo& View,
 	FPreviousViewInfo* PreviousViewInfos,
 	const FSceneTextureParameters& SceneTextures,

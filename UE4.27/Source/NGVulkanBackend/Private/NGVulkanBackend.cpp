@@ -24,14 +24,18 @@
 
 #include "NGVulkanBackend.h"
 
+// clang-format off
 #include "CoreMinimal.h"
 #include "Features/IModularFeatures.h"
-#include "IVulkanDynamicRHI.h"
 #include "Interfaces/IPluginManager.h"
 #include "NGSharedBackend.h"
 #include "NGVulkanIncludes.h"
+#include "RHI.h"
 #include "RenderGraphResources.h"
+#include "VulkanRHIBridge.h"
 #include "VulkanRHIPrivate.h"
+#include "VulkanContext.h"
+// clang-format on
 
 #define LOCTEXT_NAMESPACE "NGVulkanBackend"
 
@@ -123,13 +127,13 @@ public:
 		ffxCreateBackendVKDesc VulkanHeader = {};
 		VulkanHeader.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_BACKEND_VK;
 		VulkanHeader.header.pNext = nullptr;
-		VulkanHeader.vkDevice = GetIVulkanDynamicRHI()->RHIGetVkDevice();
-		VulkanHeader.vkPhysicalDevice = GetIVulkanDynamicRHI()->RHIGetVkPhysicalDevice();
-		VulkanHeader.vkInstance = GetIVulkanDynamicRHI()->RHIGetVkInstance();
-		VulkanHeader.vkGetInstanceProcAddr =
-			(PFN_vkGetInstanceProcAddr)GetIVulkanDynamicRHI()->RHIGetVkInstanceProcAddr("vkGetInstanceProcAddr");
+		VulkanHeader.vkDevice = static_cast<VkDevice>(GDynamicRHI->RHIGetNativeDevice());
+		VulkanHeader.vkPhysicalDevice = static_cast<VkPhysicalDevice>(GDynamicRHI->RHIGetNativePhysicalDevice());
+		VulkanHeader.vkInstance = static_cast<VkInstance>(GDynamicRHI->RHIGetNativeInstance());
+		VulkanHeader.vkGetInstanceProcAddr = (PFN_vkGetInstanceProcAddr)VulkanRHI::vkGetInstanceProcAddr(
+			VulkanHeader.vkInstance, "vkGetInstanceProcAddr");
 		VulkanHeader.vkDeviceProcAddr =
-			(PFN_vkGetDeviceProcAddr)GetIVulkanDynamicRHI()->RHIGetVkDeviceProcAddr("vkGetDeviceProcAddr");
+			(PFN_vkGetDeviceProcAddr)VulkanRHI::vkGetDeviceProcAddr(VulkanHeader.vkDevice, "vkGetDeviceProcAddr");
 		desc->pNext = (ffxApiHeader*)&VulkanHeader;
 
 		ffxReturnCode_t ret = FfxFunctions.CreateContext(context, desc, &AllocCbs.Cbs);
@@ -161,19 +165,18 @@ public:
 		return EFFXBackendAPI::Vulkan;
 	}
 
+	void SetFeatureLevel(ffxContext* context, ERHIFeatureLevel::Type FeatureLevel) final {}
+
 	uint32 GetNativeTextureFormat(FRHITexture* Texture)
 	{
 		check(Texture);
-		check(Texture->GetTexture2D());
-		return (uint32)((FVulkanTexture*)(Texture->GetTexture2D()))->ViewFormat;
+		check(Texture->GetTextureBaseRHI());
+		return (uint32)((FVulkanTextureBase*)Texture->GetTextureBaseRHI())->Surface.ViewFormat;
 	}
 
 	FfxApiResource GetNativeResource(FRHITexture* Texture, FfxApiResourceState State) final
 	{
 		check(Texture);
-		checkf(Texture->GetDesc().Dimension == ETextureDimension::Texture2D,
-			TEXT("NGVulkanBackend only supports Texture2D for now!"));
-
 		FIntVector size = Texture->GetSizeXYZ();
 		const auto imgFormat = (VkFormat)GetNativeTextureFormat(Texture);
 
@@ -214,8 +217,37 @@ public:
 
 	FfxCommandList GetNativeCommandBuffer(FRHICommandListImmediate&, FRHITexture*) final
 	{
-		check(GetIVulkanDynamicRHI());
-		return GetIVulkanDynamicRHI()->RHIGetActiveVkCommandBuffer();
+		check(GVulkanRHI);
+		check(GVulkanRHI->GetDevice());
+		FVulkanCommandBufferManager* CmdBufferMgr =
+			GVulkanRHI->GetDevice()->GetImmediateContext().GetCommandBufferManager();
+
+		check(CmdBufferMgr);
+		check(CmdBufferMgr->GetActiveCmdBuffer());
+		return CmdBufferMgr->GetActiveCmdBuffer()->GetHandle();
+	}
+
+	FfxShaderModel GetSupportedShaderModel()
+	{
+		return FFX_SHADER_MODEL_5_1;
+	}
+
+	bool IsFloat16Supported()
+	{
+		// needs implementation but we should assume that it's supported
+		check(false);
+		return true;
+	}
+
+	TArray<VkExtensionProperties> GetAllDeviceExtensions(VkPhysicalDevice InPhysicalDevice)
+	{
+		uint32_t ExtensionCount = 0;
+		VulkanRHI::vkEnumerateDeviceExtensionProperties(InPhysicalDevice, nullptr, &ExtensionCount, nullptr);
+		TArray<VkExtensionProperties> Extensions;
+		Extensions.SetNumUninitialized(ExtensionCount);
+		VulkanRHI::vkEnumerateDeviceExtensionProperties(
+			InPhysicalDevice, nullptr, &ExtensionCount, Extensions.GetData());
+		return Extensions;
 	}
 
 	bool IsNeuralGraphicSupported()
@@ -228,11 +260,10 @@ public:
 			return tensorSupported && dataGraphSupported;
 		}
 
-		IVulkanDynamicRHI* vulkanRHI = GetIVulkanDynamicRHI();
-		check(vulkanRHI);
-		VkPhysicalDevice vkPhysicalDevice = vulkanRHI->RHIGetVkPhysicalDevice();
+		check(GDynamicRHI);
+		VkPhysicalDevice vkPhysicalDevice = static_cast<VkPhysicalDevice>(GDynamicRHI->RHIGetNativePhysicalDevice());
 		check(vkPhysicalDevice);
-		TArray<VkExtensionProperties> extensions = vulkanRHI->RHIGetAllDeviceExtensions(vkPhysicalDevice);
+		TArray<VkExtensionProperties> extensions = GetAllDeviceExtensions(vkPhysicalDevice);
 
 		for (const VkExtensionProperties& ext : extensions)
 		{
@@ -285,8 +316,7 @@ void NGVulkanBackendModule::StartupModule()
 		Extensions.Add("VK_KHR_maintenance5");
 		Extensions.Add("VK_KHR_deferred_host_operations");
 		Extensions.Add("VK_KHR_synchronization2");
-
-		IVulkanDynamicRHI::AddEnabledDeviceExtensionsAndLayers(Extensions, TArrayView<const ANSICHAR* const>());
+		VulkanRHIBridge::AddEnabledDeviceExtensionsAndLayers(Extensions, TArray<const ANSICHAR*>());
 	}
 	else
 	{

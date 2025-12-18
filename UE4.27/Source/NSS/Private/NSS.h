@@ -34,10 +34,10 @@
 #include "ScreenSpaceDenoise.h"
 #include "Shaders/NssConvertVelocity.h"
 #include "Shaders/NssMirrorPad.h"
-#include "TemporalUpscaler.h"
-using INSS = UE::Renderer::Private::ITemporalUpscaler;
-using NSSPassInput = UE::Renderer::Private::ITemporalUpscaler::FInputs;
-using NSSView = FSceneView;
+
+using INSS = ITemporalUpscaler;
+using NSSPassInput = ITemporalUpscaler::FPassInputs;
+using NSSView = FViewInfo;
 
 #ifndef ENGINE_HAS_DENOISE_INDIRECT
 #define ENGINE_HAS_DENOISE_INDIRECT 0
@@ -77,10 +77,13 @@ public:
 
 	class FRDGBuilder* GetGraphBuilder();
 
-	INSS::FOutputs AddPasses(
-		FRDGBuilder& GraphBuilder, const NSSView& View, const NSSPassInput& PassInputs) const override;
-
-	INSS* Fork_GameThread(const class FSceneViewFamily& InViewFamily) const override;
+	void AddPasses(FRDGBuilder& GraphBuilder,
+		const NSSView& View,
+		const NSSPassInput& PassInputs,
+		FRDGTextureRef* OutSceneColorTexture,
+		FIntRect* OutSceneColorViewRect,
+		FRDGTextureRef* OutSceneColorHalfResTexture,
+		FIntRect* OutSceneColorHalfResViewRect) const override;
 
 	float GetMinUpsampleResolutionFraction() const override;
 	float GetMaxUpsampleResolutionFraction() const override;
@@ -135,7 +138,7 @@ public:
 		const FAmbientOcclusionInputs& ReflectionInputs,
 		const FAmbientOcclusionRayTracingConfig RayTracingConfig) const override;
 
-	FSSDSignalTextures DenoiseDiffuseIndirect(FRDGBuilder& GraphBuilder,
+	FDiffuseIndirectOutputs DenoiseDiffuseIndirect(FRDGBuilder& GraphBuilder,
 		const FViewInfo& View,
 		FPreviousViewInfo* PreviousViewInfos,
 		const FSceneTextureParameters& SceneTextures,
@@ -158,16 +161,23 @@ public:
 		const FDiffuseIndirectInputs& Inputs,
 		const FAmbientOcclusionRayTracingConfig Config) const override;
 
-	FSSDSignalTextures DenoiseDiffuseIndirectHarmonic(FRDGBuilder& GraphBuilder,
+	FDiffuseIndirectOutputs DenoiseReflectedSkyLight(FRDGBuilder& GraphBuilder,
+		const FViewInfo& View,
+		FPreviousViewInfo* PreviousViewInfos,
+		const FSceneTextureParameters& SceneTextures,
+		const FDiffuseIndirectInputs& Inputs,
+		const FAmbientOcclusionRayTracingConfig Config) const override;
+
+	FDiffuseIndirectHarmonic DenoiseDiffuseIndirectHarmonic(FRDGBuilder& GraphBuilder,
 		const FViewInfo& View,
 		FPreviousViewInfo* PreviousViewInfos,
 		const FSceneTextureParameters& SceneTextures,
 		const FDiffuseIndirectHarmonic& Inputs,
-		const HybridIndirectLighting::FCommonParameters& CommonDiffuseParameters) const override;
+		const FAmbientOcclusionRayTracingConfig Config) const override;
 
 	bool SupportsScreenSpaceDiffuseIndirectDenoiser(EShaderPlatform Platform) const override;
 
-	FSSDSignalTextures DenoiseScreenSpaceDiffuseIndirect(FRDGBuilder& GraphBuilder,
+	FDiffuseIndirectOutputs DenoiseScreenSpaceDiffuseIndirect(FRDGBuilder& GraphBuilder,
 		const FViewInfo& View,
 		FPreviousViewInfo* PreviousViewInfos,
 		const FSceneTextureParameters& SceneTextures,
