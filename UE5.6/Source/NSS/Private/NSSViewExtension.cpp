@@ -30,8 +30,8 @@
 #include "LandscapeProxy.h"
 #include "Materials/Material.h"
 #include "NGSettings.h"
-#include "NSS.h"
 #include "NSSModule.h"
+#include "NSSProxy.h"
 #include "PostProcess/PostProcessing.h"
 #include "ScenePrivate.h"
 
@@ -191,14 +191,13 @@ void NSSViewExtension::BeginRenderViewFamily(FSceneViewFamily& InViewFamily)
 			if (!WITH_EDITOR || (CVarEnableNSSInEditor.GetValueOnGameThread() == 1) || bIsGameView)
 			{
 				Upscaler->UpdateDynamicResolutionState();
-				InViewFamily.SetTemporalUpscalerInterface(Upscaler);
+				InViewFamily.SetTemporalUpscalerInterface(new NSSProxy(Upscaler));
 			}
 		}
 	}
 }
 
-void NSSViewExtension::PreRenderViewFamily_RenderThread(
-	FRHICommandListImmediate& RHICmdList, FSceneViewFamily& InViewFamily)
+void NSSViewExtension::PreRenderViewFamily_RenderThread(FRenderGraphType& GraphBuilder, FSceneViewFamily& InViewFamily)
 {
 	if (InViewFamily.GetFeatureLevel() >= ERHIFeatureLevel::ES3_1)
 	{
@@ -213,7 +212,7 @@ void NSSViewExtension::PreRenderViewFamily_RenderThread(
 	}
 }
 
-void NSSViewExtension::PreRenderView_RenderThread(FRHICommandListImmediate& RHICmdList, FSceneView& InView)
+void NSSViewExtension::PreRenderView_RenderThread(FRenderGraphType& GraphBuilder, FSceneView& InView)
 {
 	// NSS can access the previous frame of Lumen data at this point, but not later where it will be replaced with the
 	// current frame's which won't be accessible when NSS runs.
@@ -222,6 +221,7 @@ void NSSViewExtension::PreRenderView_RenderThread(FRHICommandListImmediate& RHIC
 		if (CVarEnableNSS.GetValueOnAnyThread())
 		{
 			INSSModule& NSSModuleInterface = FModuleManager::GetModuleChecked<INSSModule>(TEXT("NSS"));
+			// NSSModuleInterface.GetNSSUpscaler()->SetLumenReflections(InView);
 		}
 	}
 }
@@ -241,8 +241,7 @@ void NSSViewExtension::PrePostProcessPass_RenderThread(
 	}
 }
 
-void NSSViewExtension::PostRenderViewFamily_RenderThread(
-	FRHICommandListImmediate& RHICmdList, FSceneViewFamily& InViewFamily)
+void NSSViewExtension::PostRenderViewFamily_RenderThread(FRenderGraphType& GraphBuilder, FSceneViewFamily& InViewFamily)
 {
 	// As NSS retains pointers/references to objects the engine is not expecting clear them out now to prevent leaks or
 	// accessing dangling pointers.

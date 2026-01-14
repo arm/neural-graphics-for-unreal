@@ -39,7 +39,6 @@ r.AntiAliasingMethod 2      # With **r.AntiAliasingMethod 4** we can also use NS
 r.TemporalAA.Upscaler 1
 r.TemporalAA.Upsampling 1
 r.NSS.Enable 1
-r.ScreenPercentage 50
 ```
 
 If you want to use TAA for Mobile Render(ES31 shader platform), you need to apply this patch for UE5.4.

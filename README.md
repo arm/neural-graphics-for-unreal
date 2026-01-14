@@ -7,13 +7,23 @@
 
 Neural Super Sampling is a mobile-optimized upscaling technique that uses machine learning to improve graphical fidelity, while reducing computational cost.
 
-This repository serves as a collection of three plugins to support different Unreal® Engine version, one plugin in folder `UE4.27` supports UE4.27, one plugin in folder `UE5.4` supports UE5.4, and the other plugin in folder `UE5.5` supports UE5.5. These three Unreal® Engine plugins provide two different implementations of the Neural Super Sampling technique to be used with Unreal® projects, you can refer README for details. They all implements the `UE::Renderer::Private::ITemporalUpscaler` interface provided by the engine, so you can integrate the corresponding plugin into your game.
+This repository provides four plugins, each targeting a specific version of Unreal® Engine. The available plugins are organized as follows:
+* UE4.27 — Supports Unreal® Engine 4.27
+* UE5.4 — Supports Unreal® Engine 5.4
+* UE5.5 — Supports Unreal® Engine 5.5
+* UE5.6 — Supports Unreal® Engine 5.6
 
-For more details on both of these plugins and how to get started, please see below documents:
+The plugins for UE4.27, UE5.4, and UE5.6 are implemented using the Neural Graphics SDK for Game Engines, providing a modern and unified framework for temporal upscaling.
 
+The UE5.5 plugin is based on a legacy implementation. Due to outdated design and limited maintenance, this version is not recommended for new integrations.
+
+All plugins implement the engine‑provided UE::Renderer::Private::ITemporalUpscaler interface, enabling you to integrate the appropriate plugin into your game.
+
+For setup instructions and usage details, simply check the README file inside each plugin folder:
 * [NSS Plugin for UE4.27](./UE4.27/README.md)
 * [NSS Plugin for UE5.4](./UE5.4/README.md)
 * [NSS Plugin for UE5.5](./UE5.5/README.md)
+* [NSS Plugin for UE5.6](./UE5.6/README.md)
 
 ## Trademarks and Copyrights
 

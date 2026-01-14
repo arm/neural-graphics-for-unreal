@@ -17,6 +17,11 @@ UE5.4/Binaries/Win64/
 UE5.4/Binaries/Linux/
 UE5.4/Binaries/LinuxArm64/
 
+UE5.6/Intermediate/
+UE5.6/Binaries/Win64/
+UE5.6/Binaries/Linux/
+UE5.6/Binaries/LinuxArm64/
+
 UE5.5/Binaries/
 UE5.5/Intermediate/
 *.vs

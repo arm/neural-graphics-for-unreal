@@ -26,9 +26,11 @@
 
 #include "Modules/ModuleManager.h"
 #include "NGShared.h"
+#include "RHIFwd.h"
 
 class FRDGTexture;
-enum EPixelFormat;
+enum EPixelFormat : uint8;
+enum class ERHIAccess : uint32;
 
 enum class EFFXBackendAPI : uint8
 {

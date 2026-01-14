@@ -3,17 +3,17 @@
 // SPDX-License-Identifier: MIT
 -->
 
-# NSS Plugin for UE4.27
+# NSS Plugin for UE5.6
 
 ## Introduction
 
-This plugin calls Neural Graphics SDK for Game Engines (https://github.com/arm/neural-graphics-sdk-for-game-engines) whose API is compliant with AMD FidelityFX API to perform inference of the machine learning model and super sampling processing. The Neural Graphics SDK for Game Engines is a submodule within the UE4.27 plugin. You will need to run `git submodule update --init` after cloning this repository. Then in folder `Source\NG-SDK\`, you can find the source code of the Neural Graphics SDK for Game Engines. Some big binary files are stored in Github LFS, you will need to run `git lfs install` to make sure you have installed git-lfs and initialized it. Then you will need to run `git lfs pull` to pull all LFS files.
+This plugin calls Neural Graphics SDK for Game Engines (https://github.com/arm/neural-graphics-sdk-for-game-engines) whose API is compliant with AMD FidelityFX API to perform inference of the machine learning model and super sampling processing. The Neural Graphics SDK for Game Engines is a submodule within the UE5.6 plugin. You will need to run `git submodule update --init` after cloning this repository. Then in folder `Source\NG-SDK\`, you can find the source code of the Neural Graphics SDK for Game Engines. Some big binary files are stored in Github LFS, you will need to run `git lfs install` to make sure you have installed git-lfs and initialized it. Then you will need to run `git lfs pull` to pull all LFS files.
 
 ## System Requirements
 
 - Windows 11
-- Unreal® Engine 4.27
-- Visual Studio 2019, with the "Desktop Development with C++" and ".NET desktop build tools" packs enabled
+- Unreal® Engine 5.6
+- Visual Studio 2022, with the "Desktop Development with C++" and ".NET desktop build tools" packs enabled
 - Vulkan Software Development Kit for Windows platform version 1.4.321.0 or newer.
 
 ## Installation
@@ -28,21 +28,24 @@ This installation guide assumes that you have an Unreal® C++ project you intend
 
 4. Re-generate Visual Studio® project files and recompile your project.
 
-5. Start your project in Unreal® Editor and check that the NSS plugin is enabled. If not, enable it. This can be confirmed by setting `r.NSS.Debug 1` and checking the output debug view.
+5. Start your project in Unreal® Editor and check that the NSS plugin is enabled. If not, enable it. This can be confirmed by setting ShowFlag.VisualizeTemporalUpscaler 1 and checking which upscaler is being used.
 
 ## Troubleshooting
 
-If `r.NSS.Debug 1` does not show that NSS is being used, make sure the following console variables are set:
+If `ShowFlag.VisualizeTemporalUpscaler 1` does not show that NSS is being used, make sure the following console variables are set:
 
 ```
+r.AntiAliasingMethod 2      # With **r.AntiAliasingMethod 4** we can also use NSS.
 r.TemporalAA.Upscaler 1
 r.TemporalAA.Upsampling 1
 r.NSS.Enable 1
 ```
 
-If you changed the source code of NG-SDK, you need to update the prebuilt_binaries of NG-SDK, just double click the **BuildSDK.bat**.
-
-If you want to enable Vulkan® ES3.1 or mobile rendering for your project, please make sure the following console variable is set in DefaultEngine.ini under your project:
+If you want to use TAA for Mobile Render(ES31 shader platform), you need to set an additional console variable:
+```
+r.Mobile.AntiAliasing 2  # Set TAA on Mobile Render
+```
+Also, please make sure the following console variable is set in DefaultEngine.ini under your project:
 ```
 [/Script/Engine.RendererSettings]
 r.Mobile.SupportsGen4TAA=True
