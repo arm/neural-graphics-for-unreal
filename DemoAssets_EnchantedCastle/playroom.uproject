@@ -1,0 +1,27 @@
+{
+	"FileVersion": 3,
+	"EngineAssociation": "5.4",
+	"Category": "",
+	"Description": "",
+	"Modules": [
+		{
+			"Name": "playroom",
+			"Type": "Runtime",
+			"LoadingPhase": "Default",
+			"AdditionalDependencies": [
+				"Engine"
+			]
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "PCG",
+			"Enabled": true
+		},
+		{
+			"Name": "LTween",
+			"Enabled": true,
+			"MarketplaceURL": "com.epicgames.launcher://ue/marketplace/product/efa1b6e762974e48847e029c8ac6c602"
+		}
+	]
+}
