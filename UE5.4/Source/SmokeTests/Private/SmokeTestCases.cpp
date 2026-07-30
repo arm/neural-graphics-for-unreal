@@ -1,7 +1,6 @@
-//
-// Copyright © 2025 Arm Limited.
+// SPDX-FileCopyrightText: Copyright 2025-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 // SPDX-License-Identifier: MIT
-//
+
 
 #if WITH_EDITOR
 
@@ -72,21 +71,21 @@ static bool TryLoadTestMap(const FString& MapName, FAutomationTestBase* Test)
 static TAutoConsoleVariable<FString> CVarTestMap(
 	TEXT("r.TestMap"),
 	TEXT("/Game/ThirdPerson/Maps/ThirdPersonMap"),
-	TEXT("The map to load for the Arm NSS tests. Ensure this map exists in your project.")
+	TEXT("The map to load for the NSS tests. Ensure this map exists in your project.")
 	);
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FArmNSSEnableTest,
-	"ArmNG.PluginTests.NSSEnableTest",
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FNSSEnableTest,
+	"NG.PluginTests.NSSEnableTest",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ClientContext
 	| EAutomationTestFlags::ServerContext | EAutomationTestFlags::CommandletContext
 	| EAutomationTestFlags::EngineFilter | EAutomationTestFlags::NonNullRHI)
 
-bool FArmNSSEnableTest::RunTest(const FString& Parameters)
+bool FNSSEnableTest::RunTest(const FString& Parameters)
 {
 	// 1. Enable the temporal upscaler visualizer.
 	ADD_LATENT_AUTOMATION_COMMAND(FSetConsoleVariableLatentCommand(TEXT("ShowFlag.VisualizeTemporalUpscaler"), true));
 
-	// 2. Set the console variable to disable Arm NSS.
+	// 2. Set the console variable to disable NSS.
 	ADD_LATENT_AUTOMATION_COMMAND(FSetConsoleVariableLatentCommand(TEXT("r.NSS.Enable"), false));
 
 	// 3. Load a test map (ensure the map exists in your project)
@@ -119,14 +118,14 @@ bool FArmNSSEnableTest::RunTest(const FString& Parameters)
 	}
 
 	// 6. Take a screenshot. This latent command will capture a screenshot and save it in your project's saved folder.
-	ADD_LATENT_AUTOMATION_COMMAND(FTakeEditorScreenshotCommand({ TEXT("ArmNG_NSS_Enable_before.png"), PreviewWindow }));
+	ADD_LATENT_AUTOMATION_COMMAND(FTakeEditorScreenshotCommand({ TEXT("NG_NSS_Enable_before.png"), PreviewWindow }));
 
 	// 7. Enable NSS from the command line.
 	ADD_LATENT_AUTOMATION_COMMAND(FSetConsoleVariableLatentCommand(TEXT("r.NSS.Enable"), true));
 
 	// 8. Wait before taking a screenshot.
 	ADD_LATENT_AUTOMATION_COMMAND(FWaitLatentCommand(1.0f));
-	ADD_LATENT_AUTOMATION_COMMAND(FTakeEditorScreenshotCommand({ TEXT("ArmNG_NSS_Enable_after.png"), PreviewWindow }));
+	ADD_LATENT_AUTOMATION_COMMAND(FTakeEditorScreenshotCommand({ TEXT("NG_NSS_Enable_after.png"), PreviewWindow }));
 
 	// 9. Set the NSS default: false.
 	ADD_LATENT_AUTOMATION_COMMAND(FSetConsoleVariableLatentCommand(TEXT("r.NSS.Enable"), false));
@@ -134,13 +133,13 @@ bool FArmNSSEnableTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FArmNSSDebugTest,
-	"ArmNG.PluginTests.NSSDebugTest",
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FNSSDebugTest,
+	"NG.PluginTests.NSSDebugTest",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ClientContext
 	| EAutomationTestFlags::ServerContext | EAutomationTestFlags::CommandletContext
 	| EAutomationTestFlags::EngineFilter | EAutomationTestFlags::NonNullRHI)
 
-bool FArmNSSDebugTest::RunTest(const FString& Parameters)
+bool FNSSDebugTest::RunTest(const FString& Parameters)
 {
 	// 1. Enable the temporal upscaler visualizer.
 	ADD_LATENT_AUTOMATION_COMMAND(FSetConsoleVariableLatentCommand(TEXT("ShowFlag.VisualizeTemporalUpscaler"), true));
@@ -181,14 +180,14 @@ bool FArmNSSDebugTest::RunTest(const FString& Parameters)
 
 	// 7. Wait before taking a screenshot.
 	ADD_LATENT_AUTOMATION_COMMAND(FWaitLatentCommand(1.0f));
-	ADD_LATENT_AUTOMATION_COMMAND(FTakeEditorScreenshotCommand({ TEXT("Arm_NSS_Debug_before.png"), PreviewWindow }));
+	ADD_LATENT_AUTOMATION_COMMAND(FTakeEditorScreenshotCommand({ TEXT("NSS_Debug_before.png"), PreviewWindow }));
 
 	// 8. Enable the NSS debug mode.
 	ADD_LATENT_AUTOMATION_COMMAND(FSetConsoleVariableLatentCommand(TEXT("r.NSS.Debug"), true));
 
 	// 9. Wait before taking a screenshot.
 	ADD_LATENT_AUTOMATION_COMMAND(FWaitLatentCommand(1.0f));
-	ADD_LATENT_AUTOMATION_COMMAND(FTakeEditorScreenshotCommand({ TEXT("Arm_NSS_Debug_after.png"), PreviewWindow }));
+	ADD_LATENT_AUTOMATION_COMMAND(FTakeEditorScreenshotCommand({ TEXT("NSS_Debug_after.png"), PreviewWindow }));
 
 	// 10. Set the NSS debug mode to default: false.
 	ADD_LATENT_AUTOMATION_COMMAND(FSetConsoleVariableLatentCommand(TEXT("r.NSS.Debug"), false));
@@ -196,15 +195,15 @@ bool FArmNSSDebugTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FArmNSSAdjustMipBiasTest,
-	"ArmNG.PluginTests.NSSAdjustMipBiasTest",
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FNSSAdjustMipBiasTest,
+	"NG.PluginTests.NSSAdjustMipBiasTest",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ClientContext
 	| EAutomationTestFlags::ServerContext | EAutomationTestFlags::CommandletContext
 	| EAutomationTestFlags::EngineFilter | EAutomationTestFlags::NonNullRHI)
 
-bool FArmNSSAdjustMipBiasTest::RunTest(const FString& Parameters)
+bool FNSSAdjustMipBiasTest::RunTest(const FString& Parameters)
 {
-	// 1. Enable the temporal upscaler visualizer so we can see when Arm ASR is running.
+	// 1. Enable the temporal upscaler visualizer so we can see when  ASR is running.
 	ADD_LATENT_AUTOMATION_COMMAND(FSetConsoleVariableLatentCommand(TEXT("ShowFlag.VisualizeTemporalUpscaler"), true));
 
 	// 2. Enable the NSS.
@@ -244,14 +243,14 @@ bool FArmNSSAdjustMipBiasTest::RunTest(const FString& Parameters)
 
 	// 7. Wait before taking a screenshot.
 	ADD_LATENT_AUTOMATION_COMMAND(FWaitLatentCommand(1.0f));
-	ADD_LATENT_AUTOMATION_COMMAND(FTakeEditorScreenshotCommand({ TEXT("ArmNG_NSS_AdjustMipBias_False.png"), PreviewWindow }));
+	ADD_LATENT_AUTOMATION_COMMAND(FTakeEditorScreenshotCommand({ TEXT("NG_NSS_AdjustMipBias_False.png"), PreviewWindow }));
 
 	// 8. Set the NSS AdjustMipBias to true.
 	ADD_LATENT_AUTOMATION_COMMAND(FSetConsoleVariableLatentCommand(TEXT("r.NSS.AdjustMipBias"), true));
 
 	// 9. Wait before taking a screenshot.
 	ADD_LATENT_AUTOMATION_COMMAND(FWaitLatentCommand(1.0f));
-	ADD_LATENT_AUTOMATION_COMMAND(FTakeEditorScreenshotCommand({ TEXT("ArmNG_NSS_AdjustMipBias_True.png"), PreviewWindow }));
+	ADD_LATENT_AUTOMATION_COMMAND(FTakeEditorScreenshotCommand({ TEXT("NG_NSS_AdjustMipBias_True.png"), PreviewWindow }));
 
 	return true;
 }

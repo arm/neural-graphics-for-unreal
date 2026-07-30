@@ -40,7 +40,6 @@ public:
 
 	void BeginRenderViewFamily(FSceneViewFamily& InViewFamily) override;
 	void PreRenderViewFamily_RenderThread(FRenderGraphType& GraphBuilder, FSceneViewFamily& InViewFamily) override;
-	void PreRenderView_RenderThread(FRenderGraphType& GraphBuilder, FSceneView& InView) override;
 	void PostRenderViewFamily_RenderThread(FRenderGraphType& GraphBuilder, FSceneViewFamily& InViewFamily) override;
 	void PrePostProcessPass_RenderThread(
 		FRDGBuilder& GraphBuilder, const FSceneView& View, const FPostProcessingInputs& Inputs) override;

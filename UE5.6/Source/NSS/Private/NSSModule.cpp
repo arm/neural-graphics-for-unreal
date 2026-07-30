@@ -19,7 +19,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-// SPDX-FileCopyrightText: Copyright 2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2025-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 // SPDX-License-Identifier: MIT
 
 #include "NSSModule.h"
@@ -44,10 +44,8 @@ static bool GNSSModuleInit = false;
 
 void NSSModule::StartupModule()
 {
-	FString PluginShaderDir =
-		FPaths::Combine(IPluginManager::Get().FindPlugin(TEXT("NSS"))->GetBaseDir(), TEXT("Shaders"));
-	AddShaderSourceDirectoryMapping(TEXT("/Plugin/NSS"), PluginShaderDir);
-
+	// Shader mapping is now registered in NGVulkanBackend module to ensure it's always available
+	// regardless of whether NSS or NFRU is enabled.
 	FModuleManager::Get().LoadModuleChecked("NGVulkanBackend");
 
 	if (IsRunningCookCommandlet()) // Note this check needs to come after the shader source mapping, otherwise crashy
@@ -55,7 +53,7 @@ void NSSModule::StartupModule()
 		// If cooking, we won't have an RHI and can't use this plugin. The RHI check below would catch this, but will
 		// report an error which will fail the cooking commandlet. Instead we detect cooking separately and log this at
 		// a lower severity.
-		UE_LOG(LogNSS, Log, TEXT("Cooking detected - the ArmNG NSS Module will not be available."));
+		UE_LOG(LogNSS, Log, TEXT("Cooking detected - the NSS Module will not be available."));
 		return;
 	}
 
@@ -82,53 +80,13 @@ void NSSModule::SetTemporalUpscaler(TSharedPtr<NSS, ESPMode::ThreadSafe> Upscale
 
 void NSSModule::OnPostEngineInit()
 {
-	if (GDynamicRHI)
+	EFFXBackendAPI Api;
+	if (!INGSharedBackend::GetApiAccessor(Api))
 	{
-		FString RHIName = GDynamicRHI->GetName();
-
-		if (RHIName == TEXT("Vulkan"))
-		{
-			INGSharedBackendModule* VkBackend =
-				FModuleManager::GetModulePtr<INGSharedBackendModule>(TEXT("NGVulkanBackend"));
-			INGSharedBackend* ApiAccessor = VkBackend ? VkBackend->GetBackend() : nullptr;
-			if (ApiAccessor && ApiAccessor->IsLoaded())
-			{
-				ViewExtension = FSceneViewExtensions::NewExtension<NSSViewExtension>();
-			}
-			else
-			{
-#if PLATFORM_WINDOWS
-				// Prompt the user with more detailed information to help them debug the issue.
-				FString BaseDir = FPlatformProcess::BaseDir();
-				FString DllPath = FPaths::Combine(BaseDir, TEXT("ngsdk_windows_x64.dll"));
-				bool bDllExists = FPaths::FileExists(DllPath);
-
-				// clang-format off
-				FString Msg = FString::Printf(
-					TEXT("Failed to load the SDK DLL.\n\n"
-						"Check the following:\n"
-						"  DLL staged to: %s\n"
-						"  DLL present: %s\n"),
-					*DllPath,
-					bDllExists ? TEXT("YES") : TEXT("NO")
-				);
-				// clang-format on
-
-				FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(Msg));
-				UE_LOG(LogNSS, Error, TEXT("%s"), *Msg);
-				return;
-#endif
-			}
-		}
-		else
-		{
-			FString Msg =
-				TEXT("Plugin only supports Vulkan backend. Please switch to Vulkan and restart the editor/game.");
-			FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(Msg));
-			UE_LOG(LogTemp, Error, TEXT("%s"), *Msg);
-			return;
-		}
+		UE_LOG(LogNSS, Warning, TEXT("NSS is disabled because Vulkan RHI or ngSDK is not available at runtime."));
+		return;
 	}
+	ViewExtension = FSceneViewExtensions::NewExtension<NSSViewExtension>();
 }
 
 NSS* NSSModule::GetNSSUpscaler() const

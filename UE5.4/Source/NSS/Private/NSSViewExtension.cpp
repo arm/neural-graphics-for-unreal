@@ -19,7 +19,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-// SPDX-FileCopyrightText: Copyright 2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2025-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 // SPDX-License-Identifier: MIT
 
 #include "NSSViewExtension.h"
@@ -67,13 +67,14 @@ void NSSViewExtension::SetupViewFamily(FSceneViewFamily& InViewFamily)
 		static IConsoleVariable* CVarMinAutomaticViewMipBiasOffset =
 			IConsoleManager::Get().FindConsoleVariable(TEXT("r.ViewTextureMipBias.Offset"));
 		INSSModule& NSSModuleInterface = FModuleManager::GetModuleChecked<INSSModule>(TEXT("NSS"));
-		check(NSSModuleInterface.GetNSSUpscaler());
+		NSS* Upscaler = NSSModuleInterface.GetNSSUpscaler();
+		check(Upscaler);
 
-		if (CVarEnableNSS.GetValueOnAnyThread() && !NSSModuleInterface.GetNSSUpscaler()->IsApiSupported())
+		if (CVarEnableNSS.GetValueOnAnyThread() && !Upscaler->IsApiSupported())
 		{
-			NSSModuleInterface.GetNSSUpscaler()->Initialize();
+			Upscaler->Initialize();
 
-			if (CVarEnableNSS.GetValueOnAnyThread() && NSSModuleInterface.GetNSSUpscaler()->IsApiSupported())
+			if (CVarEnableNSS.GetValueOnAnyThread() && Upscaler->IsApiSupported())
 			{
 				// Initialize by default for game, but not the editor unless we intend to use NSS in the viewport by
 				// default
@@ -212,20 +213,6 @@ void NSSViewExtension::PreRenderViewFamily_RenderThread(FRenderGraphType& GraphB
 	}
 }
 
-void NSSViewExtension::PreRenderView_RenderThread(FRenderGraphType& GraphBuilder, FSceneView& InView)
-{
-	// NSS can access the previous frame of Lumen data at this point, but not later where it will be replaced with the
-	// current frame's which won't be accessible when NSS runs.
-	if (InView.GetFeatureLevel() >= ERHIFeatureLevel::ES3_1)
-	{
-		if (CVarEnableNSS.GetValueOnAnyThread())
-		{
-			INSSModule& NSSModuleInterface = FModuleManager::GetModuleChecked<INSSModule>(TEXT("NSS"));
-			// NSSModuleInterface.GetNSSUpscaler()->SetLumenReflections(InView);
-		}
-	}
-}
-
 void NSSViewExtension::PrePostProcessPass_RenderThread(
 	FRDGBuilder& GraphBuilder, const FSceneView& View, const FPostProcessingInputs& Inputs)
 {
@@ -247,10 +234,17 @@ void NSSViewExtension::PostRenderViewFamily_RenderThread(FRenderGraphType& Graph
 	// accessing dangling pointers.
 	if (InViewFamily.GetFeatureLevel() >= ERHIFeatureLevel::ES3_1)
 	{
+		INSSModule& NSSModuleInterface = FModuleManager::GetModuleChecked<INSSModule>(TEXT("NSS"));
 		if (CVarEnableNSS.GetValueOnAnyThread())
 		{
-			INSSModule& NSSModuleInterface = FModuleManager::GetModuleChecked<INSSModule>(TEXT("NSS"));
 			NSSModuleInterface.GetNSSUpscaler()->EndOfFrame();
+		}
+		else
+		{
+			// Even when NSS is disabled, run deferred cleanup so that pool states retired
+			// during a disable period (via ~NSSHistory → ReleaseState) are eventually freed.
+			// Without this, DeferredCleanup would never run until the next re-enable.
+			NSSModuleInterface.GetNSSUpscaler()->RunDeferredCleanup();
 		}
 	}
 }

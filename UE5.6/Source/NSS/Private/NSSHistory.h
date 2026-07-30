@@ -19,7 +19,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-// SPDX-FileCopyrightText: Copyright 2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2025-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 // SPDX-License-Identifier: MIT
 
 #pragma once
@@ -36,14 +36,14 @@ class NSS;
 //-------------------------------------------------------------------------------------
 struct NSSState : public FRHIResource
 {
-	NSSState(INGSharedBackend* InBackend) : FRHIResource(RRT_None), Backend(InBackend), LastUsedFrame(~0u)
+	NSSState(INGSharedBackend* InBackend) : FRHIResource(RRT_None), Backend(InBackend), Nss(nullptr), LastUsedFrame(~0u)
 	{
 		check(InBackend);
 	}
 
 	~NSSState()
 	{
-		if (Backend != nullptr)
+		if (Backend != nullptr && Nss != nullptr)
 		{
 			Backend->ffxDestroyContext(&Nss);
 		}
@@ -114,9 +114,7 @@ public:
 
 	// We need to keep these around on the application side instead of FFX side as otherwise we'd have to blit
 	// each of these into an internal resource. Instead, we can simply keep them alive here on the app side through RDG.
-	TRefCountPtr<IPooledRenderTarget> PaddedUpscaledColour; // No view rect associated here - always the full thing
-	TRefCountPtr<IPooledRenderTarget> PaddedDepth; // View rect is specified by PaddedDepthViewRect
-	FIntRect PaddedDepthViewRect; // Might be smaller than the texture extent (e.g. tiling quantisation)
+	TRefCountPtr<IPooledRenderTarget> UpscaledColour; // No view rect associated here - always the full thing
 
 private:
 	static TCHAR const* FfxNssDebugName;
