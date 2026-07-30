@@ -19,7 +19,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-// SPDX-FileCopyrightText: Copyright 2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2025-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 // SPDX-License-Identifier: MIT
 
 #pragma once
@@ -32,8 +32,6 @@
 #include "PostProcess/PostProcessing.h"
 #include "PostProcess/TemporalAA.h"
 #include "ScreenSpaceDenoise.h"
-#include "Shaders/NssConvertVelocity.h"
-#include "Shaders/NssMirrorPad.h"
 #include "TemporalUpscaler.h"
 using INSS = UE::Renderer::Private::ITemporalUpscaler;
 using NSSPassInput = UE::Renderer::Private::ITemporalUpscaler::FInputs;
@@ -61,11 +59,16 @@ public:
 
 	void ReleaseState(NSSStateRef State);
 
-	// Keeping this in for the purposes of checking that everything is initialized correctly.
-	static class INGSharedBackend* GetApiAccessor(EFFXBackendAPI& Api);
+	// Called on the render thread when r.NSS.Enable goes 1→0.  Sets bNeedsHistoryReset so that
+	// AddPasses passes reset=true to the SDK on the next frame, discarding stale temporal history.
+	void RequestHistoryReset() const;
+
+	// Run the deferred-cleanup pass.  May be called from NSSViewExtension even when NSS is
+	// disabled so that pool states accumulated during a disable period are eventually freed.
+	void RunDeferredCleanup() const;
 
 #if DO_CHECK || DO_GUARD_SLOW || DO_ENSURE || WITH_EDITOR
-	static void OnNSSMessage(uint32 type, const wchar_t* message);
+	static void OnNSSMessage(uint32 type, const char* message);
 #endif
 
 	static void SaveScreenPercentage();
@@ -74,6 +77,7 @@ public:
 
 	static void OnChangeNSSEnable(IConsoleVariable* Var);
 	static void OnChangeScreenPercentage(IConsoleVariable* Var);
+	static void OnChangeNSSShaderQualityMode(IConsoleVariable* Var);
 
 	class FRDGBuilder* GetGraphBuilder();
 
@@ -194,6 +198,8 @@ private:
 	mutable class FRDGBuilder* CurrentGraphBuilder;
 	mutable const IScreenSpaceDenoiser* WrappedDenoiser;
 	mutable TRefCountPtr<IPooledRenderTarget> MotionVectorRT;
+	// Set when NSS is disabled; forces NssDispatchParams.reset=true for every view on the next frame.
+	mutable bool bNeedsHistoryReset = false;
 #if WITH_EDITOR
 	bool bEnabledInEditor;
 #endif

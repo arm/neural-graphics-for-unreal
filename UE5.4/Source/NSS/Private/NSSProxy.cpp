@@ -71,7 +71,7 @@ float NSSProxy::GetMinUpsampleResolutionFraction() const
 
 float NSSProxy::GetMaxUpsampleResolutionFraction() const
 {
-	return TemporalUpscaler->GetMinUpsampleResolutionFraction();
+	return TemporalUpscaler->GetMaxUpsampleResolutionFraction();
 }
 
 IScreenSpaceDenoiser::FReflectionsOutputs NSSProxy::DenoiseReflections(FRDGBuilder& GraphBuilder,

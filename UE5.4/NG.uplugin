@@ -1,0 +1,47 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.1.0",
+	"FriendlyName": "Arm Neural Graphics Plugin",
+	"Description": "Arm Neural Graphics",
+	"Category": "Rendering",
+	"CreatedBy": "Arm Limited",
+	"CreatedByURL": "www.arm.com",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"CanContainContent": true,
+	"Installed": true,
+	"Modules": [
+		{
+			"Name": "NGShared",
+			"Type": "Runtime",
+			"LoadingPhase": "PostConfigInit"
+		},
+		{
+			"Name": "NGSettings",
+			"Type": "Runtime",
+			"LoadingPhase": "EarliestPossible"
+		},
+		{
+			"Name": "NSS",
+			"Type": "Runtime",
+			"LoadingPhase": "PostConfigInit"
+		},
+		{
+			"Name": "NGVulkanBackend",
+			"Type": "Runtime",
+			"LoadingPhase": "PostConfigInit"
+		},
+		{
+			"Name": "SmokeTests",
+			"Type": "Editor",
+			"LoadingPhase": "PostConfigInit"
+		},
+		{
+			"Name": "NFRU",
+			"Type": "Runtime",
+			"LoadingPhase": "PostConfigInit"
+		}
+	]
+}

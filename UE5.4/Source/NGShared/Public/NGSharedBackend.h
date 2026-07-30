@@ -19,7 +19,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-// SPDX-FileCopyrightText: Copyright 2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2025-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 // SPDX-License-Identifier: MIT
 
 #pragma once
@@ -31,6 +31,10 @@
 class FRDGTexture;
 enum EPixelFormat : uint8;
 enum class ERHIAccess : uint32;
+typedef struct FfxCreateResourceDescription FfxCreateResourceDescription;
+typedef struct ffxConfigureDescFrameGeneration ffxConfigureDescFrameGeneration;
+typedef struct ffxConfigureDescFrameGenerationRegisterDistortionFieldResource
+	ffxConfigureDescFrameGenerationRegisterDistortionFieldResource;
 
 enum class EFFXBackendAPI : uint8
 {
@@ -72,15 +76,33 @@ public:
 	virtual ffxReturnCode_t ffxQuery(ffxContext* context, ffxQueryDescHeader* desc) = 0;
 	virtual ffxReturnCode_t ffxDispatch(ffxContext* context, const ffxDispatchDescHeader* desc) = 0;
 
+	virtual void Init() = 0;
 	virtual EFFXBackendAPI GetAPI() const = 0;
+	virtual FfxSwapchain GetSwapchain(void* swapChain) = 0;
 	virtual FfxApiResource GetNativeResource(FRHITexture* Texture, FfxApiResourceState State) = 0;
 	virtual FfxApiResource GetNativeResource(FRDGTexture* Texture, FfxApiResourceState State) = 0;
 	virtual FfxCommandList GetNativeCommandBuffer(FRHICommandListImmediate& RHICmdList, FRHITexture* Texture) = 0;
+	virtual bool EnsureSupportedRHI() = 0;
 	virtual bool IsNeuralGraphicSupported() = 0;
 	virtual bool IsLoaded() = 0;
 	virtual void ForceUAVTransition(
 		FRHICommandListImmediate& RHICmdList, FRHITexture* OutputTexture, ERHIAccess Access) = 0;
+
+	virtual FfxApiResource GetInterpolationOutput(FfxSwapchain SwapChain) = 0;
+	virtual void* GetInterpolationCommandList(FfxSwapchain SwapChain) = 0;
+	virtual void RegisterFrameResources(FRHIResource* FIResources, uint64 FrameID) = 0;
+	virtual bool GetAverageFrameTimes(float& AvgTimeMs, float& AvgFPS) = 0;
+	virtual void CopySubRect(FfxCommandList CmdList,
+		FfxApiResource Src,
+		FfxApiResource Dst,
+		FIntPoint OutputExtents,
+		FIntPoint OutputPoint) = 0;
+	virtual void Flush(FRHITexture* Tex, FRHICommandListImmediate& RHICmdList) = 0;
+	static NGSHARED_API class INGSharedBackend* GetApiAccessor(EFFXBackendAPI& Api);
 };
+
+extern NGSHARED_API FfxApiSurfaceFormat GetFFXApiFormat(EPixelFormat UEFormat, bool bSRGB);
+extern NGSHARED_API ERHIAccess GetUEAccessState(FfxApiResourceState State);
 
 class INGSharedBackendModule : public IModuleInterface
 {

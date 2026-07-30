@@ -1,29 +1,25 @@
 <!--
-// SPDX-FileCopyrightText: Copyright 2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2025-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 // SPDX-License-Identifier: MIT
 -->
 
-# Neural Super Sampling Unreal® Engine Plugin
+# Neural Graphics Plugin for Unreal® Engine
 
-Neural Super Sampling is a mobile-optimized upscaling technique that uses machine learning to improve graphical fidelity, while reducing computational cost.
+The Neural Graphics Plugin for Unreal® Engine provides mobile-optimized graphics technologies, including Neural Super Sampling (NSS) and Neural Frame Rate Upscaling (NFRU).
 
-This repository provides four plugins, each targeting a specific version of Unreal® Engine. The available plugins are organized as follows:
+NSS improves image quality while reducing rendering cost, and NFRU increases perceived frame rate through frame generation.
+
+This repository provides three plugins, each targeting a specific version of Unreal® Engine. The available plugins are organized as follows:
 * UE4.27 — Supports Unreal® Engine 4.27
 * UE5.4 — Supports Unreal® Engine 5.4
-* UE5.5 — Supports Unreal® Engine 5.5
 * UE5.6 — Supports Unreal® Engine 5.6
 
-The plugins for UE4.27, UE5.4, and UE5.6 are implemented using the Neural Graphics SDK for Game Engines, providing a modern and unified framework for temporal upscaling.
-
-The UE5.5 plugin is based on a legacy implementation. Due to outdated design and limited maintenance, this version is not recommended for new integrations.
-
-All plugins implement the engine‑provided UE::Renderer::Private::ITemporalUpscaler interface, enabling you to integrate the appropriate plugin into your game.
+Please note that, unlike the other plugin versions, the UE4.27 plugin has not been updated to Neural Graphics SDK for Game Engines v1.1.0 and remains on v1.0.1.
 
 For setup instructions and usage details, simply check the README file inside each plugin folder:
-* [NSS Plugin for UE4.27](./UE4.27/README.md)
-* [NSS Plugin for UE5.4](./UE5.4/README.md)
-* [NSS Plugin for UE5.5](./UE5.5/README.md)
-* [NSS Plugin for UE5.6](./UE5.6/README.md)
+* [NG Plugin for UE4.27](./UE4.27/README.md)
+* [NG Plugin for UE5.4](./UE5.4/README.md)
+* [NG Plugin for UE5.6](./UE5.6/README.md)
 
 ## Trademarks and Copyrights
 

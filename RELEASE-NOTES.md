@@ -1,3 +1,20 @@
+# Public v1.1.0 Release Notes
+
+- Update Neural Graphics SDK for Game Engines to v1.1.0.
+- Use a Vulkan layer provided by SDK to add required extensions.
+- New features:
+  - Add Neural Frame Rate Upscaling (NFRU) support for Unreal® Engine 5.4 & 5.6 plugins:
+    - Support Vulkan® ES3.1, SM5 and SM6.
+    - Support Windows and Android platforms.
+    - Support fragment-pass for NFRU.
+  - Add NSS Android platform support for Unreal® Engine 5.4 & 5.6 plugins:
+    - Support fragment-pass for NSS.
+    - Support NSS shader quality modes.
+- Improvements and fixes for Unreal® Engine 5.4 & 5.6 plugins:
+  - Fix a crash when toggling NSS repeatedly.
+  - Add deferred deletion for the NSS state.
+- Deprecate and remove the Unreal® Engine 5.5 plugin.
+
 # Public v1.0.2 Release Notes
 
 - Added a new folder for Unreal® Engine 5.6 support.
