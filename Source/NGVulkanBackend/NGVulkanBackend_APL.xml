@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: Copyright 2026 Arm Limited and/or its affiliates <open-source-office@arm.com> -->
+<!-- SPDX-License-Identifier: MIT -->
+
+<root xmlns:android="http://schemas.android.com/apk/res/android">
+	<init/>
+	<resourceCopies>
+		<copyFile src="$S(PluginDir)/../../Binaries/ThirdParty/PreBuiltNGSDK/libngsdk_android_arm.so" dst="$S(BuildDir)/libs/arm64-v8a/libngsdk_android_arm.so"/>
+
+		<copyFile src="$S(PluginDir)/../../Binaries/ThirdParty/PreBuiltNGSDK/libVkLayer_arm_NG_android.so" dst="$S(BuildDir)/libs/arm64-v8a/libVkLayer_arm_NG.so"/>
+	</resourceCopies>
+	<soLoadLibrary>
+		<loadLibrary name="ngsdk_android_arm" failmsg="Could not load ngsdk library"/>
+	</soLoadLibrary>
+</root>

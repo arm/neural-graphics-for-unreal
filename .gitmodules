@@ -1,0 +1,4 @@
+[submodule "Source/NG-SDK"]
+	path = Source/NG-SDK
+	url = https://github.com/arm/neural-graphics-sdk-for-game-engines.git
+	branch = main

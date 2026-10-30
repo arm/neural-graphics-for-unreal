@@ -1,0 +1,40 @@
+// SPDX-FileCopyrightText: Copyright 2026 Arm Limited and/or its affiliates open-source-office@arm.com
+// SPDX-License-Identifier: MIT
+
+#include "/Engine/Private/Common.ush"
+#include "/Engine/Private/ScreenPass.ush"
+#include "/Plugin/NG/Private/NGConvertVelocityCommon.ush"
+
+Texture2D InputDepth;
+Texture2D InputVelocity;
+int2 ContentSize;
+float2 InvContentSize;
+float2 SourceToOutputRatio;
+int2 SourceRectMin;
+uint InvertedDepth;
+uint NeedsDepthSearch;
+
+struct FOutput
+{
+	float2 Velocity : SV_Target0;
+	float Depth : SV_Target1;
+};
+
+FOutput main(float4 SvPosition : SV_POSITION)
+{
+	FNGConvertVelocitySample Sample = ConvertVelocityAtOutputPixel(
+		InputDepth,
+		InputVelocity,
+		uint2(SvPosition.xy),
+		SourceRectMin,
+		uint2(ContentSize),
+		InvContentSize,
+		SourceToOutputRatio,
+		InvertedDepth,
+		NeedsDepthSearch);
+
+	FOutput Output;
+	Output.Velocity = ConvertVelocityToOutputSpace(Sample.Velocity);
+	Output.Depth = Sample.Depth;
+	return Output;
+}

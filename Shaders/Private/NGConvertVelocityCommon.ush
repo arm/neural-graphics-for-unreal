@@ -1,0 +1,143 @@
+// SPDX-FileCopyrightText: Copyright 2026 Arm Limited and/or its affiliates open-source-office@arm.com
+// SPDX-License-Identifier: MIT
+
+#include "/Engine/Private/Common.ush"
+#include "/Engine/Private/ScreenPass.ush"
+
+float3 ComputeStaticVelocity(float2 ScreenPos, float DeviceZ)
+{
+	float3 PosN = float3(ScreenPos, DeviceZ);
+
+	float4 ThisClip = float4(PosN, 1);
+	float4 PrevClip = mul(ThisClip, View.ClipToPrevClip);
+	float3 PrevScreen = PrevClip.xyz / PrevClip.w;
+	return PosN - PrevScreen;
+}
+
+float2 ComputeVelocity(float4 EncodedVelocity, float2 ScreenPos, float DeviceZ)
+{
+	if (EncodedVelocity.x > 0.0)
+	{
+		return DecodeVelocityFromTexture(EncodedVelocity).xy;
+	}
+
+	return ComputeStaticVelocity(ScreenPos, DeviceZ).xy;
+}
+
+struct FNGConvertVelocitySample
+{
+	float2 Velocity;
+	float Depth;
+};
+
+void SelectNearestDepthCoord(
+	Texture2D InputDepth,
+	uint2 OutputPos,
+	uint2 InputSize,
+	float2 SourceToOutputRatio,
+	int2 SourceRectMin,
+	uint InvertedDepth,
+	uint NeedsDepthSearch,
+	out uint2 SelectedRelativeSourcePos,
+	out float SelectedDepth)
+{
+	if (NeedsDepthSearch == 0)
+	{
+		SelectedRelativeSourcePos = min(OutputPos, InputSize - uint2(1, 1));
+		SelectedDepth = InputDepth[SourceRectMin + int2(SelectedRelativeSourcePos)].x;
+		return;
+	}
+
+	// Match the SDK's rectangle coverage: each output pixel scans the complete
+	// source rectangle that contributes to it, rather than sampling its center.
+	const uint2 Base = min(
+		uint2(floor(float2(OutputPos) * SourceToOutputRatio)),
+		InputSize - uint2(1, 1));
+	const uint2 ExclusiveEnd = min(
+		InputSize,
+		max(
+			Base + uint2(1, 1),
+			uint2(ceil(float2(OutputPos + uint2(1, 1)) * SourceToOutputRatio))));
+
+	SelectedRelativeSourcePos = Base;
+	SelectedDepth = InputDepth[SourceRectMin + int2(Base)].x;
+
+	for (uint y = Base.y; y < ExclusiveEnd.y; ++y)
+	{
+		for (uint x = Base.x; x < ExclusiveEnd.x; ++x)
+		{
+			const uint2 SampleRelativeSourcePos = uint2(x, y);
+			const float SampleDepth = InputDepth[SourceRectMin + int2(SampleRelativeSourcePos)].x;
+			const bool SelectSample = InvertedDepth != 0
+				? SampleDepth > SelectedDepth
+				: SampleDepth < SelectedDepth;
+			if (SelectSample)
+			{
+				SelectedDepth = SampleDepth;
+				SelectedRelativeSourcePos = SampleRelativeSourcePos;
+			}
+		}
+	}
+}
+
+FNGConvertVelocitySample ConvertVelocityAtOutputPixel(
+	Texture2D InputDepth,
+	Texture2D InputVelocity,
+	uint2 OutputPos,
+	int2 SourceRectMin,
+	uint2 InputSize,
+	float2 InvContentSize,
+	float2 SourceToOutputRatio,
+	uint InvertedDepth,
+	uint NeedsDepthSearch)
+{
+	uint2 RelativeSourcePos;
+	FNGConvertVelocitySample Sample;
+	SelectNearestDepthCoord(
+		InputDepth,
+		OutputPos,
+		InputSize,
+		SourceToOutputRatio,
+		SourceRectMin,
+		InvertedDepth,
+		NeedsDepthSearch,
+		RelativeSourcePos,
+		Sample.Depth);
+
+	const int2 SourcePos = SourceRectMin + int2(RelativeSourcePos);
+	const float4 EncodedVelocity = InputVelocity[SourcePos];
+
+	float2 ViewportUV = (float2(RelativeSourcePos) + 0.5) * InvContentSize;
+	float2 ScreenPos = ViewportUVToScreenPos(ViewportUV);
+	Sample.Velocity = ComputeVelocity(EncodedVelocity, ScreenPos, Sample.Depth);
+	return Sample;
+}
+
+FNGConvertVelocitySample ConvertVelocityAtOutputPixel(
+	Texture2D InputDepth,
+	Texture2D InputVelocity,
+	uint2 OutputPos,
+	int2 SourceRectMin,
+	float2 InputExtent,
+	float2 InvContentSize,
+	float2 InvOutputExtent)
+{
+	return ConvertVelocityAtOutputPixel(
+		InputDepth,
+		InputVelocity,
+		OutputPos,
+		SourceRectMin,
+		uint2(InputExtent),
+		InvContentSize,
+		InputExtent * InvOutputExtent,
+		0,
+		0);
+}
+
+float2 ConvertVelocityToOutputSpace(float2 Velocity)
+{
+	// FidelityFX expects negative velocity from what UE produces.
+	// FidelityFX also wants the absolute result multiplied by (0.5, -0.5).
+	// Combine these steps by multiplying by (-0.5, 0.5).
+	return Velocity * float2(-0.5, 0.5);
+}

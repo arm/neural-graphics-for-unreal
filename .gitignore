@@ -1,0 +1,14 @@
+.vscode/
+.idea/
+*.sln
+*.code-workspace
+
+Intermediate/
+Binaries/Win64/
+Binaries/Linux/
+Binaries/LinuxArm64/
+*.log
+*.pyc
+__pycache__/
+
+release/
