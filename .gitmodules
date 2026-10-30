@@ -1,9 +1,0 @@
-[submodule "UE5.4/Source/NG-SDK"]
-	path = UE5.4/Source/NG-SDK
-	url = https://github.com/arm/neural-graphics-sdk-for-game-engines
-[submodule "UE4.27/Source/NG-SDK"]
-	path = UE4.27/Source/NG-SDK
-	url = https://github.com/arm/neural-graphics-sdk-for-game-engines
-[submodule "UE5.6/Source/NG-SDK"]
-	path = UE5.6/Source/NG-SDK
-	url = https://github.com/arm/neural-graphics-sdk-for-game-engines

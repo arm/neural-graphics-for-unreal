@@ -1,3 +1,16 @@
+# Public v1.1.1 Release Notes
+
+- Update Neural Graphics SDK for Game Engines to v1.1.1.
+- Unify Unreal® Engine 5.4 and 5.6 support in a single plugin folder, replacing separate version-specific folders.
+- Add `DownloadEmulationLayer.bat` to download the compatible Vulkan ML emulation-layer runtime on Windows. Layer configuration remains a separate setup step.
+- Improvements and fixes for Unreal® Engine 5.4 & 5.6 plugins:
+  - Improve NSS/NFRU resource lifetime handling and release cached NFRU viewport references during resize.
+  - Fix NFRU input handling and NSS history-reset behavior.
+  - Fix NFRU rendering artifacts with offset viewports and image-quality issues when `r.ScreenPercentage` is greater than 100.
+  - Fix vertically flipped UI after fragment-shader dispatches.
+  - Optimize motion-vector conversion to reduce memory bandwidth usage.
+  - Fix automatic SDK rebuilding when required binaries are missing.
+
 # Public v1.1.0 Release Notes
 
 - Update Neural Graphics SDK for Game Engines to v1.1.0.

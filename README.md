@@ -1,27 +1,81 @@
 <!--
-// SPDX-FileCopyrightText: Copyright 2025-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
+// SPDX-FileCopyrightText: Copyright 2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 // SPDX-License-Identifier: MIT
 -->
 
-# Neural Graphics Plugin for Unreal® Engine
+# Neural Graphics Plugin for Unreal Engine
 
-The Neural Graphics Plugin for Unreal® Engine provides mobile-optimized graphics technologies, including Neural Super Sampling (NSS) and Neural Frame Rate Upscaling (NFRU).
+## Introduction
 
-NSS improves image quality while reducing rendering cost, and NFRU increases perceived frame rate through frame generation.
+The Arm Neural Graphics Plugin provides neural upscaling and frame generation
+for Unreal Engine through the [Neural Graphics SDK for Game Engines](https://github.com/arm/neural-graphics-sdk-for-game-engines)
+and its Vulkan backend. In UE5, NSS and NFRU can be enabled independently or
+together.
 
-This repository provides three plugins, each targeting a specific version of Unreal® Engine. The available plugins are organized as follows:
-* UE4.27 — Supports Unreal® Engine 4.27
-* UE5.4 — Supports Unreal® Engine 5.4
-* UE5.6 — Supports Unreal® Engine 5.6
+### Neural Super Sampling (NSS)
 
-Please note that, unlike the other plugin versions, the UE4.27 plugin has not been updated to Neural Graphics SDK for Game Engines v1.1.0 and remains on v1.0.1.
+NSS uses a neural network and temporal information to reconstruct
+display-resolution images from lower-resolution renders. Integrated into
+Unreal Engine's temporal upscaling pipeline, it helps balance image quality and
+rendering cost.
 
-For setup instructions and usage details, simply check the README file inside each plugin folder:
-* [NG Plugin for UE4.27](./UE4.27/README.md)
-* [NG Plugin for UE5.4](./UE5.4/README.md)
-* [NG Plugin for UE5.6](./UE5.6/README.md)
+### Neural Frame Rate Upscaling (NFRU)
 
-## Trademarks and Copyrights
+NFRU uses neural frame interpolation to generate an intermediate frame between
+two rendered frames, improving perceived frame rate and motion smoothness.
+The plugin integrates frame generation into Unreal Engine's presentation
+pipeline, allowing generated frames to be displayed alongside rendered frames.
+
+## Choose a branch
+
+This branch contains documentation only. Plugin source is maintained on
+separate branches:
+
+| Branch | Contents | Supported Unreal Engine versions |
+| --- | --- | --- |
+| [`main`](https://github.com/arm/neural-graphics-for-unreal/tree/main) | Documentation and branch catalog | Not applicable |
+| [`ue5`](https://github.com/arm/neural-graphics-for-unreal/tree/ue5) | Neural Graphics Plugin with NSS and NFRU | 5.4 and 5.6 |
+| [`ue4.27`](https://github.com/arm/neural-graphics-for-unreal/tree/ue4.27) | NSS plugin | 4.27 |
+| [`DemoAssets_EnchantedCastle`](https://github.com/arm/neural-graphics-for-unreal/tree/DemoAssets_EnchantedCastle) | Enchanted Castle demo project | 5.4 or later |
+
+Each source branch places its plugin at the repository root.
+Read that branch's README for installation instructions and requirements.
+The UE4.27 plugin remains on the older SDK integration; it does not provide
+the UE5 plugin's NFRU functionality.
+
+## Getting started
+
+Install Git and [Git LFS](https://git-lfs.com/), then clone the branch matching
+your Unreal Engine version. For example, for UE5:
+
+```shell
+git lfs install
+git clone --branch ue5 --recurse-submodules https://github.com/arm/neural-graphics-for-unreal.git
+```
+
+Run `git lfs pull` in the cloned repository and its initialized submodules
+when required by the selected branch's README.
+
+### Source archives
+
+Plugin source ZIPs do not include Git submodules. Clone the appropriate plugin
+branch with `--recurse-submodules` and follow its README for setup.
+
+## Documentation
+
+- [UE5 setup and usage](https://github.com/arm/neural-graphics-for-unreal/blob/ue5/README.md)
+- [UE4.27 setup and usage](https://github.com/arm/neural-graphics-for-unreal/blob/ue4.27/README.md)
+- [NSS learning path](https://learn.arm.com/learning-paths/mobile-graphics-and-gaming/nss-unreal/)
+- [NFRU learning path](https://learn.arm.com/learning-paths/mobile-graphics-and-gaming/nfru-unreal/)
+
+## License
+
+Plugin source is licensed under the [MIT License](LICENSE), except where a
+file carries a different notice. Preserve the applicable third-party notices.
+The demo branch includes its own licenses and attribution; in particular,
+LTween is licensed under CC BY 4.0.
+
+## Trademarks
 
 Arm® is a registered trademark of Arm Limited (or its subsidiaries) in the US and/or elsewhere.
 
